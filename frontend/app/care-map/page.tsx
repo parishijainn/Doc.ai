@@ -37,12 +37,48 @@ type RouteResp = {
   note?: string;
 };
 
+type TransitStop = {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+  kind: 'bus' | 'rail' | 'subway' | 'tram';
+  operator?: string;
+  lineHints?: string[];
+};
+
+type TransitPlanResp = {
+  fromStops: TransitStop[];
+  toStops: TransitStop[];
+  suggested: {
+    startStop?: TransitStop;
+    endStop?: TransitStop;
+    walkToStart?: { distanceMeters: number; durationSeconds: number; geometry: any };
+    walkFromEnd?: { distanceMeters: number; durationSeconds: number; geometry: any };
+    note: string;
+  };
+  error?: string;
+};
+
+type RouteMode = 'drive' | 'walk' | 'transit' | 'rideshare';
+
 function milesToMeters(mi: number): number {
   return Math.round(mi * 1609.34);
 }
 
 function metersToMiles(m: number): number {
   return m / 1609.34;
+}
+
+function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c * 1000;
 }
 
 function fmtMi(m?: number): string {
@@ -107,6 +143,76 @@ function shortSpecialty(s: string): string {
   return s.slice(0, 10);
 }
 
+function modeLabel(m: RouteMode): string {
+  if (m === 'drive') return 'Drive';
+  if (m === 'walk') return 'Walk';
+  if (m === 'transit') return 'Transit';
+  return 'Rideshare';
+}
+
+function transitKindLabel(k: TransitStop['kind']): string {
+  if (k === 'bus') return 'Bus';
+  if (k === 'tram') return 'Tram';
+  if (k === 'subway') return 'Subway';
+  return 'Rail';
+}
+
+function deriveNeedsFromSummaryText(text: string): { severity?: 'routine' | 'soon' | 'emergency'; requiredSpecialties: string[] } {
+  const lower = (text ?? '').toLowerCase();
+  const required = new Set<string>();
+
+  if (/\b(rash|itch|hives|eczema|derm|skin)\b/.test(lower)) required.add('dermatology');
+  if (/\b(fracture|sprain|strain|ankle|knee|shoulder|orthopedic|ortho|bone)\b/.test(lower)) required.add('orthopedics');
+  if (/\b(chest pain|pressure|heart|palpitation|cardio)\b/.test(lower)) required.add('cardiology');
+  if (/\b(cough|shortness of breath|breathing|asthma|pulmo|wheez)\b/.test(lower)) required.add('pulmonology');
+  if (/\b(stroke|weakness|numbness|slurred|neuro|seizure)\b/.test(lower)) required.add('neurology');
+  if (/\b(abdominal|stomach|vomit|diarrhea|gi\b|gastro)\b/.test(lower)) required.add('gastroenterology');
+
+  let severity: 'routine' | 'soon' | 'emergency' | undefined;
+  if (/\b(call 911|emergency|immediately|severe|trouble breathing|stroke)\b/.test(lower)) severity = 'emergency';
+  else if (/\b(urgent|same-day|today)\b/.test(lower)) severity = 'soon';
+
+  return { severity, requiredSpecialties: Array.from(required) };
+}
+
+function featureCollectionFromGeometries(geoms: any[]): any {
+  return {
+    type: 'FeatureCollection',
+    features: (geoms ?? [])
+      .filter(Boolean)
+      .map((g) => ({ type: 'Feature', properties: {}, geometry: g })),
+  };
+}
+
+function appleTransitLink(from: { lat: number; lng: number }, to: { lat: number; lng: number }): string {
+  // Apple Maps directions; dirflg=r for public transit
+  return `http://maps.apple.com/?saddr=${from.lat},${from.lng}&daddr=${to.lat},${to.lng}&dirflg=r`;
+}
+
+function googleTransitLink(from: { lat: number; lng: number }, to: { lat: number; lng: number }): string {
+  return `https://www.google.com/maps/dir/?api=1&origin=${from.lat},${from.lng}&destination=${to.lat},${to.lng}&travelmode=transit`;
+}
+
+function uberDeepLink(from: { lat: number; lng: number }, to: { lat: number; lng: number }, destName: string): string {
+  return (
+    `https://m.uber.com/ul/?action=setPickup` +
+    `&pickup[latitude]=${encodeURIComponent(String(from.lat))}` +
+    `&pickup[longitude]=${encodeURIComponent(String(from.lng))}` +
+    `&dropoff[latitude]=${encodeURIComponent(String(to.lat))}` +
+    `&dropoff[longitude]=${encodeURIComponent(String(to.lng))}` +
+    `&dropoff[nickname]=${encodeURIComponent(destName || 'Destination')}`
+  );
+}
+
+function lyftDeepLink(from: { lat: number; lng: number }, to: { lat: number; lng: number }): string {
+  return (
+    `https://ride.lyft.com/?pickup[latitude]=${encodeURIComponent(String(from.lat))}` +
+    `&pickup[longitude]=${encodeURIComponent(String(from.lng))}` +
+    `&destination[latitude]=${encodeURIComponent(String(to.lat))}` +
+    `&destination[longitude]=${encodeURIComponent(String(to.lng))}`
+  );
+}
+
 function describeGeoError(e: unknown): string {
   // GeolocationPositionError is not consistently stringified across browsers.
   const anyE = e as any;
@@ -130,7 +236,7 @@ export default function CareMapPage() {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
-  const routeRef = useRef<RouteResp | null>(null);
+  const routeRef = useRef<any>(null); // GeoJSON FeatureCollection for map rendering
   const nearbyInFlightRef = useRef(false);
   const bestInFlightRef = useRef(false);
   const routeInFlightRef = useRef(false);
@@ -162,6 +268,9 @@ export default function CareMapPage() {
   const [selected, setSelected] = useState<Place | null>(null);
   const [route, setRoute] = useState<RouteResp | null>(null);
   const [routeBusy, setRouteBusy] = useState(false);
+  const [routeMode, setRouteMode] = useState<RouteMode>('drive');
+  const [driveEstimate, setDriveEstimate] = useState<{ distanceMeters: number; durationSeconds: number; fallback?: boolean } | null>(null);
+  const [transitPlan, setTransitPlan] = useState<TransitPlanResp | null>(null);
 
   const [severity, setSeverity] = useState<'routine' | 'soon' | 'emergency'>('routine');
   const [needSpec, setNeedSpec] = useState({
@@ -172,6 +281,9 @@ export default function CareMapPage() {
     neurology: false,
     gastroenterology: false,
   });
+  const [useVisitNeeds, setUseVisitNeeds] = useState(false);
+  const [visitNeedsBusy, setVisitNeedsBusy] = useState(false);
+  const [visitNeeds, setVisitNeeds] = useState<{ severity?: 'routine' | 'soon' | 'emergency'; requiredSpecialties: string[] } | null>(null);
   const [best, setBest] = useState<{ place: Place | null; reasoning: string[] }>({ place: null, reasoning: [] });
 
   const shareUrl = useMemo(() => {
@@ -180,6 +292,32 @@ export default function CareMapPage() {
     if (!base || !visitId) return '';
     return `${base}/visit/invite?visitId=${encodeURIComponent(visitId)}`;
   }, [mounted, visitId]);
+
+  useEffect(() => {
+    if (!useVisitNeeds) return;
+    if (!visitId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        setVisitNeedsBusy(true);
+        const r = await fetch(`${API}/api/visit/${encodeURIComponent(visitId)}/summary`);
+        const data = await r.json().catch(() => ({}));
+        const s = (data as any)?.summary ?? {};
+        const blob = `${String(s?.whatIHeard ?? '')}\n${Array.isArray(s?.likelyPossibilities) ? s.likelyPossibilities.join('\n') : ''}\n${Array.isArray(s?.warningSigns) ? s.warningSigns.join('\n') : ''}`;
+        const derived = deriveNeedsFromSummaryText(blob);
+        if (cancelled) return;
+        setVisitNeeds(derived);
+      } catch {
+        if (cancelled) return;
+        setVisitNeeds({ requiredSpecialties: [] });
+      } finally {
+        if (!cancelled) setVisitNeedsBusy(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [useVisitNeeds, visitId]);
 
   const effectiveTypes = useMemo(() => {
     const out: string[] = [];
@@ -276,10 +414,7 @@ export default function CareMapPage() {
       if (routeRef.current) {
         try {
           const src = map.getSource('route') as any;
-          src?.setData({
-            type: 'FeatureCollection',
-            features: [{ type: 'Feature', properties: {}, geometry: routeRef.current.geometry }],
-          });
+          src?.setData(routeRef.current);
         } catch {}
       }
     });
@@ -309,7 +444,7 @@ export default function CareMapPage() {
     }
   };
 
-  const setRouteOnMap = (r: RouteResp | null) => {
+  const setRouteOnMap = (geojson: any | null) => {
     const map = mapRef.current;
     if (!map) return;
     const src = map.getSource('route');
@@ -317,14 +452,7 @@ export default function CareMapPage() {
       // Map not loaded yet; we'll render on load.
       return;
     }
-    const data =
-      r && r.geometry
-        ? {
-            type: 'FeatureCollection',
-            features: [{ type: 'Feature', properties: {}, geometry: r.geometry }],
-          }
-        : { type: 'FeatureCollection', features: [] };
-    src.setData(data);
+    src.setData(geojson ?? { type: 'FeatureCollection', features: [] });
   };
 
   const getLocation = async () => {
@@ -453,9 +581,16 @@ export default function CareMapPage() {
     const c = locArg ?? loc;
     if (!c) return;
     bestInFlightRef.current = true;
-    const required = Object.entries(needSpec)
-      .filter(([, v]) => v)
-      .map(([k]) => k);
+    const derivedRequired = useVisitNeeds ? (visitNeeds?.requiredSpecialties ?? []) : [];
+    const required = (useVisitNeeds && derivedRequired.length
+      ? derivedRequired
+      : Object.entries(needSpec)
+          .filter(([, v]) => v)
+          .map(([k]) => k)) as string[];
+    const effectiveSeverity = (useVisitNeeds && visitNeeds?.severity ? visitNeeds.severity : severity) as
+      | 'routine'
+      | 'soon'
+      | 'emergency';
     try {
       const ac = new AbortController();
       const t = window.setTimeout(() => ac.abort(), 20_000);
@@ -468,7 +603,7 @@ export default function CareMapPage() {
           lng: c.lng,
           radiusM,
           patientNeeds: {
-            severity,
+            severity: effectiveSeverity,
             requiredSpecialties: required,
             flags: [],
           },
@@ -484,41 +619,90 @@ export default function CareMapPage() {
     }
   };
 
-  const routeTo = async (p: Place) => {
+  const routeTo = async (p: Place, mode: RouteMode = 'drive') => {
     if (!loc) return;
     if (routeInFlightRef.current) return;
     routeInFlightRef.current = true;
     setSelected(p);
+    setRouteMode(mode);
     setRouteBusy(true);
     setRoute(null);
+    setDriveEstimate(null);
+    setTransitPlan(null);
+    routeRef.current = null;
     setRouteOnMap(null);
-    setNote('Routing… This can take a few seconds.');
+    setNote(mode === 'transit' ? 'Planning transit assist…' : 'Routing… This can take a few seconds.');
     try {
-      const ac = new AbortController();
-      const t = window.setTimeout(() => ac.abort(), 15_000);
-      const r = await fetch(
-        `${API}/api/geo/route?fromLat=${loc.lat}&fromLng=${loc.lng}&toLat=${p.lat}&toLng=${p.lng}&mode=driving`,
-        { signal: ac.signal }
-      );
-      window.clearTimeout(t);
-      const data = (await r.json()) as RouteResp;
-      if ((data as any).error) throw new Error((data as any).details || (data as any).error);
-      setRoute(data);
-      routeRef.current = data;
-      setRouteOnMap(data);
-      mapRef.current?.fitBounds(
-        [
-          [Math.min(loc.lng, p.lng), Math.min(loc.lat, p.lat)],
-          [Math.max(loc.lng, p.lng), Math.max(loc.lat, p.lat)],
-        ],
-        { padding: 60 }
-      );
-      // Bring the map into view so users see the route line.
-      mapContainerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      if (data.fallback) {
-        setNote('Route ready (approximate). OSRM routing server is unavailable right now.');
+      if (mode === 'drive' || mode === 'walk' || mode === 'rideshare') {
+        const osrmMode = mode === 'walk' ? 'walking' : 'driving';
+        const ac = new AbortController();
+        const t = window.setTimeout(() => ac.abort(), 15_000);
+        const r = await fetch(
+          `${API}/api/geo/route?fromLat=${loc.lat}&fromLng=${loc.lng}&toLat=${p.lat}&toLng=${p.lng}&mode=${osrmMode}`,
+          { signal: ac.signal }
+        );
+        window.clearTimeout(t);
+        const data = (await r.json()) as RouteResp;
+        if ((data as any).error) throw new Error((data as any).details || (data as any).error);
+        setRoute(data);
+        setDriveEstimate({ distanceMeters: data.distanceMeters, durationSeconds: data.durationSeconds, fallback: data.fallback });
+        const fc = featureCollectionFromGeometries([data.geometry]);
+        routeRef.current = fc;
+        setRouteOnMap(fc);
+        mapRef.current?.fitBounds(
+          [
+            [Math.min(loc.lng, p.lng), Math.min(loc.lat, p.lat)],
+            [Math.max(loc.lng, p.lng), Math.max(loc.lat, p.lat)],
+          ],
+          { padding: 60 }
+        );
+        mapContainerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (data.fallback) setNote('Route ready (approximate). OSRM routing server is unavailable right now.');
+        else setNote(mode === 'rideshare' ? 'Rideshare options ready.' : 'Route ready. The route line is shown on the map.');
       } else {
-        setNote('Route ready. The route line is shown on the map and steps are listed in the directions box.');
+        const ac = new AbortController();
+        const t = window.setTimeout(() => ac.abort(), 20_000);
+        const r = await fetch(`${API}/api/geo/transit/plan`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: ac.signal,
+          body: JSON.stringify({
+            fromLat: loc.lat,
+            fromLng: loc.lng,
+            toLat: p.lat,
+            toLng: p.lng,
+            radiusM: 800,
+          }),
+        });
+        window.clearTimeout(t);
+        const data = (await r.json()) as TransitPlanResp;
+        setTransitPlan(data);
+
+        const walkA = (data as any)?.suggested?.walkToStart?.geometry;
+        const walkB = (data as any)?.suggested?.walkFromEnd?.geometry;
+        const fc = featureCollectionFromGeometries([walkA, walkB]);
+        routeRef.current = fc;
+        setRouteOnMap(fc);
+
+        // Fit bounds for all involved points
+        const pts: Array<{ lat: number; lng: number }> = [{ lat: loc.lat, lng: loc.lng }, { lat: p.lat, lng: p.lng }];
+        const ss = data?.suggested?.startStop;
+        const es = data?.suggested?.endStop;
+        if (ss) pts.push({ lat: ss.lat, lng: ss.lng });
+        if (es) pts.push({ lat: es.lat, lng: es.lng });
+        const minLng = Math.min(...pts.map((x) => x.lng));
+        const maxLng = Math.max(...pts.map((x) => x.lng));
+        const minLat = Math.min(...pts.map((x) => x.lat));
+        const maxLat = Math.max(...pts.map((x) => x.lat));
+        mapRef.current?.fitBounds(
+          [
+            [minLng, minLat],
+            [maxLng, maxLat],
+          ],
+          { padding: 60 }
+        );
+        mapContainerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setNote('Transit assist ready. This does not include schedule-based ride time.');
       }
     } catch (e) {
       setNote(`Could not get route (OSRM may be slow right now): ${String(e)}`);
@@ -583,8 +767,7 @@ export default function CareMapPage() {
   };
 
   return (
-    <main className="min-h-screen bg-slate-50">
-      <div className="max-w-6xl mx-auto p-4 lg:p-6 space-y-4">
+    <main className="max-w-6xl mx-auto px-4 py-8 space-y-4">
         <header className="bg-white border-2 border-slate-200 rounded-xl p-4 flex flex-col lg:flex-row gap-3 items-start lg:items-center justify-between">
           <div>
             <h1 className="text-senior-2xl font-bold text-slate-900">Care Map</h1>
@@ -673,6 +856,25 @@ export default function CareMapPage() {
                 <option value="soon">Soon (same/next day)</option>
                 <option value="emergency">Emergency</option>
               </select>
+
+              {visitId ? (
+                <label className="mt-2 flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg p-3">
+                  <input
+                    type="checkbox"
+                    checked={useVisitNeeds}
+                    onChange={(e) => setUseVisitNeeds(e.target.checked)}
+                    className="w-5 h-5"
+                  />
+                  <span className="text-sm">
+                    Use my visit needs {visitNeedsBusy ? '(loading…) ' : ''}
+                    <span className="text-slate-500">(from summary)</span>
+                  </span>
+                </label>
+              ) : (
+                <div className="mt-2 text-xs text-slate-500">
+                  Tip: open the map with <span className="font-mono">?visitId=&lt;id&gt;</span> to enable “Use my visit needs”.
+                </div>
+              )}
 
               <label className="text-sm text-slate-700 font-medium mt-2">Specialty needs (optional)</label>
               <div className="grid grid-cols-2 gap-2">
@@ -795,7 +997,7 @@ export default function CareMapPage() {
                     </button>
 
                     <div className="grid grid-cols-2 gap-2 mt-3">
-                      <button className="senior-btn-secondary !min-w-0" onClick={() => routeTo(p)} disabled={!loc || routeBusy}>
+                      <button className="senior-btn-secondary !min-w-0" onClick={() => routeTo(p, routeMode)} disabled={!loc || routeBusy}>
                         {routeBusy ? 'Routing…' : 'Route'}
                       </button>
                       {p.phone ? (
@@ -827,12 +1029,16 @@ export default function CareMapPage() {
           <section className="lg:col-span-2 bg-white border-2 border-slate-200 rounded-xl overflow-hidden">
             <div className="p-3 border-b border-slate-200 flex flex-wrap gap-2 items-center justify-between">
               <p className="font-bold text-senior-lg">Map</p>
-              {route ? (
+              {routeMode === 'transit' && transitPlan ? (
+                <div className="text-sm text-slate-700">
+                  Transit assist • walk segments shown • <span className="text-slate-500">schedule-dependent</span>
+                </div>
+              ) : route ? (
                 <div className="text-senior text-slate-700">
                   Route: {fmtMi(route.distanceMeters)} • ETA {fmtMin(route.durationSeconds)}
                 </div>
               ) : (
-                <div className="text-sm text-slate-600">Select a place, then press “Route”.</div>
+                <div className="text-sm text-slate-600">Select a place, then choose a route mode.</div>
               )}
             </div>
             <div ref={mapContainerRef} className="w-full h-[70vh] lg:h-[78vh]" />
@@ -854,6 +1060,25 @@ export default function CareMapPage() {
                 <button className="senior-btn-secondary !min-w-0 px-4 py-2" onClick={() => setSelected(null)}>
                   Close
                 </button>
+              </div>
+
+              <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="text-sm font-semibold text-slate-700">Route mode</div>
+                <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {(['drive', 'walk', 'transit', 'rideshare'] as RouteMode[]).map((m) => (
+                    <button
+                      key={m}
+                      className={m === routeMode ? 'senior-btn w-full !min-w-0' : 'senior-btn-secondary w-full !min-w-0'}
+                      onClick={() => routeTo(selected, m)}
+                      disabled={!loc || routeBusy}
+                    >
+                      {modeLabel(m)}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-2 text-xs text-slate-600">
+                  Transit is best-effort (no schedules). Rideshare opens Uber/Lyft.
+                </div>
               </div>
 
               {selected.type === 'hospital' && selected.capacity ? (
@@ -882,8 +1107,8 @@ export default function CareMapPage() {
               ) : null}
 
               <div className="grid grid-cols-2 gap-2 mt-4">
-                <button className="senior-btn-secondary !min-w-0" onClick={() => routeTo(selected)} disabled={!loc || routeBusy}>
-                  {routeBusy ? 'Routing…' : 'Get directions'}
+                <button className="senior-btn-secondary !min-w-0" onClick={() => routeTo(selected, routeMode)} disabled={!loc || routeBusy}>
+                  {routeBusy ? 'Loading…' : routeMode === 'rideshare' ? 'Refresh estimate' : 'Get directions'}
                 </button>
                 {selected.phone ? (
                   <a className="senior-btn-secondary !min-w-0 text-center" href={`tel:${selected.phone}`}>
@@ -901,7 +1126,110 @@ export default function CareMapPage() {
                 ) : null}
               </div>
 
-              {route?.steps?.length ? (
+              {routeMode === 'rideshare' && loc ? (
+                <div className="mt-4">
+                  <div className="font-semibold text-senior-lg">Rideshare</div>
+                  {driveEstimate ? (
+                    <div className="text-sm text-slate-700 mt-1">
+                      Estimated drive: {fmtMi(driveEstimate.distanceMeters)} • {fmtMin(driveEstimate.durationSeconds)}
+                      {driveEstimate.fallback ? ' (approx.)' : ''}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-slate-600 mt-1">Loading estimate…</div>
+                  )}
+                  <div className="grid grid-cols-2 gap-2 mt-3">
+                    <a
+                      className="senior-btn-secondary !min-w-0 text-center"
+                      href={uberDeepLink(loc, { lat: selected.lat, lng: selected.lng }, selected.name)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Book with Uber
+                    </a>
+                    <a
+                      className="senior-btn-secondary !min-w-0 text-center"
+                      href={lyftDeepLink(loc, { lat: selected.lat, lng: selected.lng })}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Book with Lyft
+                    </a>
+                  </div>
+                  <div className="text-xs text-slate-600 mt-2">
+                    Tip: booking opens the Uber/Lyft app or website. No prices are shown here.
+                  </div>
+                </div>
+              ) : null}
+
+              {routeMode === 'transit' && loc ? (
+                <div className="mt-4">
+                  <div className="font-semibold text-senior-lg">Transit assist (best-effort)</div>
+                  {transitPlan ? (
+                    <div className="mt-2 space-y-3">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-800">
+                        {transitPlan.suggested?.note}
+                      </div>
+
+                      {transitPlan.suggested?.startStop || transitPlan.suggested?.endStop ? (
+                        <div className="rounded-xl border border-slate-200 p-4">
+                          <div className="font-semibold text-slate-800">Suggested plan</div>
+                          <ol className="mt-2 space-y-2 text-sm text-slate-800">
+                            <li>
+                              1) Walk to <span className="font-semibold">{transitPlan.suggested?.startStop?.name ?? 'a nearby stop'}</span>{' '}
+                              {transitPlan.suggested?.walkToStart ? `(${fmtMin(transitPlan.suggested.walkToStart.durationSeconds)})` : ''}
+                            </li>
+                            <li>2) Ride transit toward the destination area (schedule-dependent)</li>
+                            <li>
+                              3) Walk from <span className="font-semibold">{transitPlan.suggested?.endStop?.name ?? 'a stop near the destination'}</span>{' '}
+                              {transitPlan.suggested?.walkFromEnd ? `(${fmtMin(transitPlan.suggested.walkFromEnd.durationSeconds)})` : ''}
+                            </li>
+                          </ol>
+                        </div>
+                      ) : null}
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <a className="senior-btn-secondary !min-w-0 text-center" href={appleTransitLink(loc, { lat: selected.lat, lng: selected.lng })} target="_blank" rel="noreferrer">
+                          Open Apple Maps (Transit)
+                        </a>
+                        <a className="senior-btn-secondary !min-w-0 text-center" href={googleTransitLink(loc, { lat: selected.lat, lng: selected.lng })} target="_blank" rel="noreferrer">
+                          Open Google Maps (Transit)
+                        </a>
+                      </div>
+
+                      <div className="grid md:grid-cols-2 gap-3">
+                        <div className="rounded-xl border border-slate-200 p-4">
+                          <div className="font-semibold text-slate-800">Stops near you</div>
+                          <ul className="mt-2 space-y-2 text-sm">
+                            {(transitPlan.fromStops ?? []).slice(0, 5).map((s) => (
+                              <li key={s.id} className="text-slate-800">
+                                <span className="font-semibold">{s.name}</span>{' '}
+                                <span className="text-slate-600">({transitKindLabel(s.kind)})</span>
+                              </li>
+                            ))}
+                            {!transitPlan.fromStops?.length ? <li className="text-slate-600">No stops found nearby.</li> : null}
+                          </ul>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 p-4">
+                          <div className="font-semibold text-slate-800">Stops near destination</div>
+                          <ul className="mt-2 space-y-2 text-sm">
+                            {(transitPlan.toStops ?? []).slice(0, 5).map((s) => (
+                              <li key={s.id} className="text-slate-800">
+                                <span className="font-semibold">{s.name}</span>{' '}
+                                <span className="text-slate-600">({transitKindLabel(s.kind)})</span>
+                              </li>
+                            ))}
+                            {!transitPlan.toStops?.length ? <li className="text-slate-600">No stops found near destination.</li> : null}
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-slate-600 mt-2">Loading transit plan…</div>
+                  )}
+                </div>
+              ) : null}
+
+              {routeMode !== 'transit' && route?.steps?.length ? (
                 <div className="mt-4">
                   <div className="font-semibold text-senior-lg">Turn-by-turn</div>
                   <ol className="mt-2 space-y-2 max-h-52 overflow-y-auto pr-1">
@@ -920,7 +1248,6 @@ export default function CareMapPage() {
             </div>
           </div>
         )}
-      </div>
     </main>
   );
 }

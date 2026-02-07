@@ -1,46 +1,25 @@
-export type CareMapPlaceType =
-  | 'hospital'
-  | 'urgent_care'
-  | 'primary_care'
-  | 'specialist'
-  | 'pharmacy'
-  | 'transit';
+export type CareMapPlaceType = 'hospital' | 'urgent_care' | 'primary_care' | 'specialist' | 'pharmacy';
 
 export type CareMapPlace = {
   id: string;
-  name: string;
   type: CareMapPlaceType;
+  name: string;
   lat: number;
   lng: number;
-  address: string;
+  address?: string;
   phone?: string;
   website?: string;
   specialties?: string[];
-  // Optional enrichment (computed elsewhere)
-  capacity?: {
-    status: 'green' | 'yellow' | 'red';
-    bedsOpen: number;
-    acceptingPatients: boolean;
-    updatedAt: string;
-  };
+  // Optional seeded fields (capacityTable may fill these)
+  capacity?: { status: 'green' | 'yellow' | 'red'; acceptingPatients: boolean; note?: string };
 };
 
-function cleanStr(x: unknown): string | undefined {
-  const s = typeof x === 'string' ? x.trim() : '';
-  return s ? s : undefined;
+function n(n: any): number | null {
+  const x = typeof n === 'number' ? n : Number(n);
+  return Number.isFinite(x) ? x : null;
 }
 
-function parseSpecialties(tags: Record<string, any>): string[] | undefined {
-  const raw = cleanStr(tags['healthcare:speciality'] ?? tags['healthcare:specialty']);
-  if (!raw) return undefined;
-  const parts = raw
-    .split(/[;,]/g)
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-  return parts.length ? Array.from(new Set(parts)) : undefined;
-}
-
-function buildAddress(tags: Record<string, any>): string {
+function pickAddress(tags: Record<string, any>): string | undefined {
   const parts = [
     tags['addr:housenumber'],
     tags['addr:street'],
@@ -48,77 +27,39 @@ function buildAddress(tags: Record<string, any>): string {
     tags['addr:state'],
     tags['addr:postcode'],
   ].filter(Boolean);
-  const line = parts.join(' ').trim();
-  return line || tags['addr:full'] || tags['contact:address'] || '';
+  const s = parts.join(' ').trim();
+  return s || tags['addr:full'] || tags.address || undefined;
 }
 
-function inferType(tags: Record<string, any>): CareMapPlaceType {
-  const amenity = cleanStr(tags.amenity)?.toLowerCase();
-  const healthcare = cleanStr(tags.healthcare)?.toLowerCase();
-  const speciality = cleanStr(tags['healthcare:speciality'] ?? tags['healthcare:specialty'])?.toLowerCase();
-
-  if (amenity === 'pharmacy') return 'pharmacy';
-  if (amenity === 'hospital' || tags.emergency === 'yes') return 'hospital';
-  if (healthcare === 'urgent_care') return 'urgent_care';
-
-  // Transit
-  const highway = cleanStr(tags.highway)?.toLowerCase();
-  const railway = cleanStr(tags.railway)?.toLowerCase();
-  const pt = cleanStr(tags.public_transport)?.toLowerCase();
-  if (highway === 'bus_stop' || railway === 'station' || pt === 'platform' || pt === 'station') return 'transit';
-
-  // Clinics / doctors
-  if (healthcare === 'specialist' || Boolean(speciality)) return 'specialist';
-  if (amenity === 'clinic' || healthcare === 'clinic') return 'primary_care';
-  if (amenity === 'doctors' || healthcare === 'doctor') return 'primary_care';
-
-  // Fallback (should be rare with our queries)
-  return 'primary_care';
+function typeToOverpassFilters(type: CareMapPlaceType): string[] {
+  switch (type) {
+    case 'hospital':
+      return ['amenity=hospital', 'amenity=clinic'];
+    case 'urgent_care':
+      return ['healthcare=urgent_care', 'amenity=clinic'];
+    case 'primary_care':
+      return ['healthcare=doctor', 'amenity=doctors'];
+    case 'specialist':
+      return ['healthcare=specialist'];
+    case 'pharmacy':
+      return ['amenity=pharmacy'];
+    default:
+      return ['amenity=clinic'];
+  }
 }
 
-function overpassFiltersForTypes(types: CareMapPlaceType[]): string[] {
-  const out: string[] = [];
-  const want = new Set(types);
-
-  if (want.has('hospital')) out.push(`nwr["amenity"="hospital"]`);
-  if (want.has('urgent_care')) out.push(`nwr["healthcare"="urgent_care"]`, `nwr["amenity"="clinic"]["healthcare"="urgent_care"]`);
-  if (want.has('primary_care'))
-    out.push(`nwr["amenity"="clinic"]`, `nwr["amenity"="doctors"]`, `nwr["healthcare"="doctor"]`, `nwr["healthcare"="clinic"]`);
-  if (want.has('specialist'))
-    out.push(
-      `nwr["healthcare"="specialist"]`,
-      `nwr["healthcare:speciality"]`,
-      `nwr["healthcare:specialty"]`
-    );
-  if (want.has('pharmacy')) out.push(`nwr["amenity"="pharmacy"]`);
-  if (want.has('transit'))
-    out.push(
-      `nwr["highway"="bus_stop"]`,
-      `nwr["railway"="station"]`,
-      `nwr["public_transport"="platform"]`,
-      `nwr["public_transport"="station"]`
-    );
-
-  return out;
-}
-
-async function overpassQuery(query: string): Promise<any[]> {
-  const url = 'https://overpass-api.de/api/interpreter';
-  const r = await fetch(url, {
+async function overpass(query: string): Promise<any> {
+  const overpassUrl = 'https://overpass-api.de/api/interpreter';
+  const res = await fetch(overpassUrl, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      // Be a good citizen for public Overpass instances.
-      'User-Agent': 'CareZoom/1.0 (care map MVP)',
-    },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: `data=${encodeURIComponent(query)}`,
   });
-  if (!r.ok) {
-    const text = await r.text().catch(() => '');
-    throw new Error(`Overpass failed (${r.status}): ${text}`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(`Overpass failed (${res.status}): ${JSON.stringify(data).slice(0, 500)}`);
   }
-  const data = (await r.json()) as { elements?: any[] };
-  return data.elements ?? [];
+  return data;
 }
 
 export async function getNearbyPlaces(
@@ -127,53 +68,71 @@ export async function getNearbyPlaces(
   radiusM: number,
   types: CareMapPlaceType[]
 ): Promise<CareMapPlace[]> {
-  const filters = overpassFiltersForTypes(types);
-  if (!filters.length) return [];
+  const ts = (types?.length ? types : (['hospital'] as CareMapPlaceType[])).slice(0, 8);
 
-  const around = `(around:${Math.max(100, Math.min(radiusM, 50_000))},${lat},${lng})`;
-  const body = filters.map((f) => `${f}${around};`).join('\n');
+  const orParts = ts
+    .flatMap((t) => typeToOverpassFilters(t).map((f) => ({ t, f })))
+    .map(({ f }) => `nwr[${f}](around:${radiusM},${lat},${lng});`)
+    .join('\n');
+
   const query = `[out:json][timeout:15];
 (
-${body}
+${orParts}
 );
 out center tags;`;
 
-  const elements = await overpassQuery(query);
-  const results: CareMapPlace[] = [];
-  for (const el of elements) {
-    const cLat = el.lat ?? el.center?.lat;
-    const cLng = el.lon ?? el.center?.lon;
-    if (typeof cLat !== 'number' || typeof cLng !== 'number') continue;
-    const tags = (el.tags ?? {}) as Record<string, any>;
-    const name = cleanStr(tags.name) ?? 'Care option';
-    const phone = cleanStr(tags.phone ?? tags['contact:phone']);
-    const website = cleanStr(tags.website ?? tags['contact:website']);
-    const address = buildAddress(tags);
-    const specialties = parseSpecialties(tags);
-    const type = inferType(tags);
-    if (!types.includes(type)) continue;
-    results.push({
-      id: `${el.type ?? 'nwr'}/${el.id ?? name}-${Math.round(cLat * 1e5)}-${Math.round(cLng * 1e5)}`,
-      name,
-      type,
-      lat: cLat,
-      lng: cLng,
-      address,
-      phone,
-      website,
-      specialties,
-    });
-  }
+  try {
+    const data = await overpass(query);
+    const elements = Array.isArray(data?.elements) ? data.elements : [];
 
-  // Deduplicate roughly by (name + type + rounded location).
-  const seen = new Set<string>();
-  const deduped: CareMapPlace[] = [];
-  for (const p of results) {
-    const k = `${p.type}|${p.name.toLowerCase()}|${Math.round(p.lat * 1e4)}|${Math.round(p.lng * 1e4)}`;
-    if (seen.has(k)) continue;
-    seen.add(k);
-    deduped.push(p);
+    const out: CareMapPlace[] = elements
+      .map((el: any) => {
+        const tags: Record<string, any> = el.tags ?? {};
+        const cLat = n(el.lat ?? el.center?.lat);
+        const cLng = n(el.lon ?? el.center?.lon);
+        if (cLat == null || cLng == null) return null;
+
+        // Best-effort type inference
+        const isPharmacy = tags.amenity === 'pharmacy';
+        const isHospital = tags.amenity === 'hospital';
+        const isUrgent = tags.healthcare === 'urgent_care';
+        const isDoctor = tags.amenity === 'doctors' || tags.healthcare === 'doctor';
+        const inferred: CareMapPlaceType =
+          isHospital ? 'hospital' : isUrgent ? 'urgent_care' : isPharmacy ? 'pharmacy' : isDoctor ? 'primary_care' : 'specialist';
+
+        const id = `${el.type ?? 'nwr'}-${String(el.id ?? '')}`;
+        return {
+          id,
+          type: inferred,
+          name: String(tags.name ?? 'Care option'),
+          lat: cLat,
+          lng: cLng,
+          address: pickAddress(tags),
+          phone: tags.phone ?? tags['contact:phone'] ?? undefined,
+          website: tags.website ?? tags['contact:website'] ?? undefined,
+          specialties: tags['healthcare:speciality']
+            ? String(tags['healthcare:speciality'])
+                .split(/[;,]/)
+                .map((s) => s.trim())
+                .filter(Boolean)
+            : undefined,
+        } satisfies CareMapPlace;
+      })
+      .filter(Boolean) as CareMapPlace[];
+
+    // De-dupe by name+coords
+    const seen = new Set<string>();
+    const deduped: CareMapPlace[] = [];
+    for (const p of out) {
+      const k = `${p.name.toLowerCase()}@${Math.round(p.lat * 1e4)}/${Math.round(p.lng * 1e4)}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      deduped.push(p);
+    }
+    return deduped.slice(0, 60);
+  } catch {
+    // MVP: return empty on failure (frontend has graceful copy)
+    return [];
   }
-  return deduped;
 }
 

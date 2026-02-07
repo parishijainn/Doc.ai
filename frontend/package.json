@@ -3,17 +3,25 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3000",
-    "build": "next build",
-    "start": "next start",
+    "clean": "node -e \"const fs=require('fs'); fs.rmSync('.next',{recursive:true,force:true}); fs.rmSync('.next-dev',{recursive:true,force:true}); fs.rmSync('node_modules/.cache',{recursive:true,force:true});\"",
+    "dev": "NEXT_DIST_DIR=.next-dev WATCHPACK_POLLING=true WATCHPACK_POLLING_INTERVAL=1000 NEXT_TELEMETRY_DISABLED=1 next dev -p 3000",
+    "dev:clean": "lsof -ti :3000 | xargs kill -9 2>/dev/null || true && npm run clean && npm run dev",
+    "build": "NODE_ENV=production NEXT_DIST_DIR=.next next build",
+    "start": "NEXT_DIST_DIR=.next next start",
     "lint": "next lint"
   },
   "dependencies": {
     "@daily-co/daily-js": "^0.64.0",
+    "@livekit/components-react": "^2.9.19",
+    "@livekit/components-styles": "^1.2.0",
+    "fuse.js": "^7.1.0",
+    "livekit-client": "^2.17.1",
+    "lucide-react": "^0.563.0",
     "maplibre-gl": "^5.7.0",
     "next": "14.0.4",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "tesseract.js": "^5.1.1"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
