@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { config } from '../config.js';
-import { createConversation } from '../services/tavusService.js';
+import { createTavusConversation } from '../services/tavusService.js';
 import { analyzeImage } from '../services/visionService.js';
+import { buildTavusPrompt, checkAge, checkDuplicateIngredient, checkEmergency, generateOtcPlan } from '../services/otcPlanService.js';
 import { addUtterance, getVisitByConversationId, setSummary, upsertVisit } from '../store/visitTable.js';
 import { buildVisitSummary } from '../services/visitSummaryService.js';
 
@@ -31,10 +31,6 @@ MULTI-SPEAKER HANDLING:
 - If you detect cues like “tell her”, “tell him”, “my mom”, “my dad”, “she said”, “he said”, multiple names, or multiple voices:
   Ask: “Just to confirm—am I speaking with the patient, or a caregiver?”
 
-CLINICIAN THOROUGHNESS TRIGGERS (ask extra questions when relevant):
-- If cough lasts > 2–4 weeks OR coughing blood OR chest pain OR shortness of breath:
-  Ask about: travel/TB exposure, weight loss/night sweats, smoking/vaping, COPD/asthma history, leg swelling/pain (clot risk), immunosuppression.
-
 OUTPUT FORMAT (use these section titles only when delivering the plan; avoid repeating every turn):
 So to summarize…
 Most likely causes
@@ -51,25 +47,15 @@ const CAREZOOM_GREETING =
 
 /**
  * POST /api/visit/start
- * Creates a Tavus conversation and returns conversation_id + conversation_url.
- * This is the primary entrypoint for shareable caregiver links.
+ * Creates a Tavus conversation and returns conversation_id + conversation_url + meeting_token (compat).
  */
-router.post('/api/visit/start', async (req, res) => {
-  const personaId = (req.body?.persona_id ?? req.body?.personaId ?? config.tavus.personaId ?? '').trim();
-  const replicaId = (req.body?.replica_id ?? req.body?.replicaId ?? config.tavus.replicaId ?? '').trim();
-  if (!personaId || !replicaId) {
-    return res.status(400).json({ error: 'persona_id and replica_id are required' });
-  }
-
+router.post('/api/visit/start', async (_req, res) => {
   try {
-    const convo = await createConversation({
-      personaId,
-      replicaId,
-      conversationName: 'CareZoom Visit',
+    const convo = await createTavusConversation({
       conversationalContext: CAREZOOM_CONVERSATION_CONTEXT,
       customGreeting: CAREZOOM_GREETING,
       requireAuth: true,
-      maxParticipants: 3,
+      conversationName: `CareZoom visit ${new Date().toISOString()}`,
     });
 
     upsertVisit({
@@ -84,15 +70,22 @@ router.post('/api/visit/start', async (req, res) => {
       conversation_id: convo.conversationId,
       conversation_url: convo.conversationUrl,
       meeting_token: convo.meetingToken,
+      // New keys (kept for the newer frontend shape)
+      session_id: convo.conversationId,
+      join_url: convo.conversationUrl,
     });
   } catch (e) {
-    return res.status(500).json({ error: 'Failed to create Tavus conversation', details: String(e) });
+    const msg = String(e);
+    if (msg.includes('401') || msg.toLowerCase().includes('unauthorized')) {
+      return res.status(401).json({ error: 'Tavus authentication failed', details: msg });
+    }
+    return res.status(500).json({ error: 'Failed to create Tavus conversation', details: msg });
   }
 });
 
 /**
  * GET /api/visit/:conversationId
- * For caregiver join: returns the conversation_url (+ token if auth required).
+ * For caregiver join: returns the conversation_url (+ token).
  */
 router.get('/api/visit/:conversationId', (req, res) => {
   const { conversationId } = req.params;
@@ -102,6 +95,8 @@ router.get('/api/visit/:conversationId', (req, res) => {
     conversation_id: v.conversationId,
     conversation_url: v.conversationUrl,
     meeting_token: v.meetingToken,
+    session_id: v.conversationId,
+    join_url: v.conversationUrl,
   });
 });
 
@@ -121,7 +116,7 @@ router.post('/api/visit/:conversationId/utterance', (req, res) => {
 
 /**
  * POST /api/visit/:conversationId/image
- * Analyze image and return a safe prompt the client can send to Tavus via interactions protocol.
+ * Analyze image and return a safe prompt the client can optionally send to the agent.
  */
 router.post('/api/visit/:conversationId/image', upload.single('image'), async (req, res) => {
   const { conversationId } = req.params;
@@ -133,13 +128,76 @@ router.post('/api/visit/:conversationId/image', upload.single('image'), async (r
 
   const analysis = await analyzeImage(file.buffer, file.mimetype);
 
-  const tavusPrompt =
+  const agentPrompt =
     `The user uploaded an image. Classification: ${analysis.imageType}. ` +
     `Non-diagnostic observations: ${analysis.observations.join(' ')} ` +
     `Please respond with your structured sections (What I’m hearing / Most likely causes / What you can do now / Warning signs / Who to see / Timeline). ` +
     `Do not diagnose and do not give medication dosing.`;
 
-  return res.json({ analysis, tavus_prompt: tavusPrompt });
+  // Keep tavus_prompt key for backwards compatibility with older frontend logic.
+  return res.json({ analysis, tavus_prompt: agentPrompt, agent_prompt: agentPrompt });
+});
+
+/**
+ * POST /api/visit/:conversationId/otc-plan
+ * Generates a label-based OTC medication plan and returns a tavus_prompt to share into the meeting.
+ * Also stores a system utterance so summaries include it.
+ */
+router.post('/api/visit/:conversationId/otc-plan', async (req, res) => {
+  const { conversationId } = req.params;
+  const v = getVisitByConversationId(conversationId);
+  if (!v) return res.status(404).json({ error: 'Visit not found' });
+
+  const { medication, symptomInput } = req.body ?? {};
+  if (!medication || !symptomInput) return res.status(400).json({ error: 'medication and symptomInput required' });
+
+  try {
+    const input = {
+      symptoms: Array.isArray(symptomInput.symptoms) ? symptomInput.symptoms.map(String) : [],
+      severity: Number(symptomInput.severity ?? 5),
+      age: Number(symptomInput.age ?? 0),
+      otherMeds: String(symptomInput.otherMeds ?? ''),
+      otherSymptoms: symptomInput.otherSymptoms ? String(symptomInput.otherSymptoms) : undefined,
+      proceedDespiteInteraction: Boolean(symptomInput.proceedDespiteInteraction),
+    };
+
+    const med = {
+      id: String(medication.id ?? ''),
+      name: String(medication.name ?? ''),
+      active_ingredient: String(medication.active_ingredient ?? ''),
+      strength: String(medication.strength ?? ''),
+      standard_label_dose: String(medication.standard_label_dose ?? ''),
+      max_daily_dose: String(medication.max_daily_dose ?? ''),
+      symptom_targets: Array.isArray(medication.symptom_targets) ? medication.symptom_targets.map(String) : [],
+      contraindications: Array.isArray(medication.contraindications) ? medication.contraindications.map(String) : [],
+      min_age_years: medication.min_age_years != null ? Number(medication.min_age_years) : undefined,
+      do_not_use_with: Array.isArray(medication.do_not_use_with) ? medication.do_not_use_with.map(String) : undefined,
+    };
+
+    // Hard safety checks
+    const emergency = checkEmergency(input);
+    if (!emergency.ok) {
+      const prompt = buildTavusPrompt({ medication: med, input, emergencyMessage: emergency.error });
+      addUtterance(conversationId, 'system', `Medication scan flagged emergency: ${emergency.error}`);
+      return res.json({ success: true, emergency: true, emergencyMessage: emergency.error, tavus_prompt: prompt });
+    }
+
+    const ageCheck = checkAge(input, med);
+    if (!ageCheck.ok) return res.status(400).json({ success: false, error: ageCheck.error });
+
+    const dupCheck = checkDuplicateIngredient(input, med);
+    if (!dupCheck.ok) return res.status(400).json({ success: false, error: dupCheck.error });
+
+    const out = await generateOtcPlan(med, input);
+    const prompt = buildTavusPrompt({ medication: med, input, plan: out.plan });
+
+    addUtterance(conversationId, 'system', `Medication scan: ${med.name} (${med.active_ingredient} · ${med.strength}).`);
+    addUtterance(conversationId, 'system', `Medication plan: ${out.plan.labelUsagePlan} | Max: ${out.plan.doNotExceed} | Avoid if: ${out.plan.avoidIf}`);
+
+    return res.json({ success: true, plan: out.plan, tavus_prompt: prompt, error: out.error });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: `Failed to generate plan: ${String(e)}` });
+  }
 });
 
 router.get('/api/visit/:conversationId/summary', async (req, res) => {

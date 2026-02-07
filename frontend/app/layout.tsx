@@ -7,20 +7,20 @@ export const metadata: Metadata = {
   description: 'Video visit support for older adults. Triage guidance, education, and care navigation—not a substitute for a doctor.',
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export const viewport = {
+  themeColor: '#f8fafc',
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 2,
+};
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="min-h-full">
-      <head>
-        <meta name="theme-color" content="#f8fafc" />
-        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2" />
-      </head>
       <body className="min-h-full antialiased">
         <AppLayout>{children}</AppLayout>
       </body>
     </html>
   );
 }
+

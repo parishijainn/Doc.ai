@@ -684,6 +684,9 @@ export default function VisitJoinPage() {
                         <Link href={`/visit/${conversationId}/summary`}><Button size="md" className="w-full">Go to summary</Button></Link>
                         <Link href={`/visit/${conversationId}/photo`}><Button variant="secondary" size="md" className="w-full">Open photos</Button></Link>
                         <Link href={`/visit/${conversationId}/care-map`}><Button variant="secondary" size="md" className="w-full">Open care map</Button></Link>
+                        <Link href={`/meds?visitId=${encodeURIComponent(conversationId)}`} target="_blank">
+                          <Button variant="secondary" size="md" className="w-full">Open med scanner</Button>
+                        </Link>
                       </div>
                     </div>
                   ),

@@ -16,13 +16,14 @@ export function Tabs({
 
   return (
     <div>
-      <div className="inline-flex rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
+      <div className="flex flex-wrap gap-1 rounded-2xl border border-slate-200 bg-white p-1 shadow-sm max-w-full">
         {tabs.map((t) => (
           <button
             key={t.id}
+            type="button"
             onClick={() => onChange(t.id)}
             className={cn(
-              'px-4 py-2 rounded-xl text-sm font-semibold transition',
+              'px-4 py-2 rounded-xl text-sm font-semibold transition whitespace-nowrap',
               t.id === active.id ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'
             )}
           >

@@ -5,11 +5,16 @@
 backend/.env
 frontend/.env.local
 
+# Local imports / scratch
+_imports/
+
 # Dependencies and build
 node_modules/
 backend/dist/
 frontend/.next/
 .next/
+.next-dev/
+frontend/.next-dev/
 
 # Logs and audit
 backend/logs/

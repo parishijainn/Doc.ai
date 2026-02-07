@@ -3,8 +3,17 @@ import path from 'path';
 
 export interface VisitRecord {
   id: string; // internal id
+  /**
+   * Historically "conversationId" (Tavus). Keep the name to avoid breaking routes.
+   */
   conversationId: string;
+  /**
+   * Historically "conversationUrl" (Tavus/Daily room URL). Keep the name to avoid breaking routes.
+   */
   conversationUrl: string;
+  /**
+   * Daily meeting token (returned by Tavus when `require_auth=true`).
+   */
   meetingToken?: string;
   createdAt: string;
   updatedAt: string;
@@ -19,7 +28,6 @@ export interface VisitRecord {
     disclaimer: string;
     generatedAt: string;
     model?: string;
-    /** True if generated without LLM (fallback). */
     fallback?: boolean;
   };
 }
@@ -80,7 +88,11 @@ export function getVisitByConversationId(conversationId: string): VisitRecord | 
   return visits.get(conversationId);
 }
 
-export function addUtterance(conversationId: string, speaker: VisitRecord['utterances'][number]['speaker'], text: string) {
+export function addUtterance(
+  conversationId: string,
+  speaker: VisitRecord['utterances'][number]['speaker'],
+  text: string
+) {
   const v = visits.get(conversationId);
   if (!v) return;
   v.utterances.push({ speaker, text, at: new Date().toISOString() });
@@ -98,3 +110,4 @@ export function setSummary(conversationId: string, summary: NonNullable<VisitRec
 
 // Load persisted visits on server start so shared links survive restarts.
 loadFromDisk();
+

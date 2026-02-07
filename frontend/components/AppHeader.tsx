@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { MapPinned, Stethoscope, Users } from 'lucide-react';
+import { MapPinned, Pill, Stethoscope, Users } from 'lucide-react';
 
 function NavLink({ href, label }: { href: string; label: string }) {
   return (
@@ -44,6 +44,13 @@ export function AppHeader() {
           >
             <MapPinned className="w-4 h-4" />
             Care Map
+          </Link>
+          <Link
+            href="/meds"
+            className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition"
+          >
+            <Pill className="w-4 h-4" />
+            Med scanner
           </Link>
           <Link
             href="/visit/invite"
