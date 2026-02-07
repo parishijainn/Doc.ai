@@ -43,10 +43,10 @@ export default function SummaryPage() {
   const takeaways = [now[0], now[1], warn[0]].filter(Boolean).slice(0, 3) as string[];
 
   return (
-    <main className="max-w-6xl mx-auto px-4 py-8 space-y-6">
+    <main className="max-w-7xl mx-auto px-6 py-10 space-y-6">
       <header className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
         <div>
-          <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-slate-900">Visit summary</h1>
+          <h1 className="text-2xl md:text-3xl font-semibold tracking-tight text-slate-900">Visit summary</h1>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600">
             <Badge variant="neutral">Visit ID: <span className="font-mono">{sessionId}</span></Badge>
             <span className="inline-flex items-center gap-2">

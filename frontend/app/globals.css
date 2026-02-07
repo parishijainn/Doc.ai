@@ -5,8 +5,9 @@
 :root {
   --senior-bg: #f8fafc;
   --senior-fg: #0f172a;
-  --senior-accent: #0d9488;
-  --senior-accent-hover: #0f766e;
+  /* Keep legacy --senior-* tokens, but align with the new indigo system. */
+  --senior-accent: #4f46e5;
+  --senior-accent-hover: #4338ca;
   --senior-danger: #dc2626;
   --senior-high-contrast: 1;
 }
@@ -37,14 +38,14 @@ body.high-contrast .caption-box {
 }
 
 body {
-  font-size: 1.25rem;
-  line-height: 1.6;
+  font-size: 1rem;
+  line-height: 1.55;
   color: var(--senior-fg);
   background: var(--senior-bg);
 }
 
 .senior-btn {
-  @apply px-8 py-4 text-senior-lg font-semibold rounded-xl min-h-[56px] min-w-[200px];
+  @apply inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-lg min-h-[36px] transition;
   background: var(--senior-accent);
   color: white;
 }
@@ -59,17 +60,17 @@ body {
 }
 
 .senior-btn-secondary {
-  @apply px-8 py-4 text-senior-lg font-semibold rounded-xl border-2 border-teal-600 text-teal-700 bg-white min-h-[56px];
+  @apply inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-slate-200 text-slate-700 bg-white min-h-[36px] transition;
 }
 
 .senior-input {
-  @apply text-senior p-4 rounded-lg border-2 border-slate-300 w-full max-w-md;
+  @apply text-sm px-3 py-2 rounded-lg border border-slate-200 bg-white w-full max-w-md;
 }
 
 .senior-input:focus {
-  @apply outline-none border-teal-500 ring-2 ring-teal-200;
+  @apply outline-none border-indigo-300 ring-4 ring-indigo-100;
 }
 
 .caption-box {
-  @apply bg-slate-800 text-white p-4 rounded-lg text-senior max-h-32 overflow-y-auto;
+  @apply bg-slate-900 text-white p-3 rounded-lg text-sm max-h-40 overflow-y-auto;
 }

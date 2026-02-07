@@ -27,7 +27,7 @@ export function Modal({
       aria-modal="true"
     >
       <div
-        className={cn('w-full max-w-xl rounded-2xl border border-slate-200 bg-white shadow-xl', className)}
+        className={cn('w-full max-w-xl rounded-xl border border-slate-200 bg-white shadow-xl', className)}
         onClick={(e) => e.stopPropagation()}
       >
         {(title ?? footer) ? (
@@ -36,7 +36,7 @@ export function Modal({
               {title ? <div className="text-lg font-extrabold tracking-tight text-slate-900">{title}</div> : null}
             </div>
             <button
-              className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+              className="rounded-lg px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 transition-colors"
               onClick={onClose}
             >
               Close

@@ -1,104 +1,116 @@
-# Doc.ai
-A Zoom-like video visit experience for senior citizens: AI clinician avatar (Tavus), image upload (injuries/skin/medications/exercises), and local care navigation (maps + OSRM routing). **This system does not diagnose or provide definitive treatment.** It offers triage guidance, education, next-step recommendations, and escalates to real clinicians when needed.
+# Doc.ai (TartanHacks)
 
-## Product Goals
+Doc.ai is a modern AI-powered telehealth web app: a Zoom-like visit flow (Tavus video agent), visit summaries, photo-based observations, OTC medication scanning (camera + OCR), and a care navigation map (nearby places + routing).  
+**This project is a prototype and is not a doctor. It does not diagnose or provide definitive treatment.**
 
-- **One-click start**: "Start Visit" with minimal steps, optional caregiver invite
-- **Speech-first**: natural language symptoms + live captions
-- **Image inputs**: upload or camera for injury/skin/medication/exercise
-- **Safe guidance**: possible causes, red flags, what to do now, who to see, questions to ask
-- **Care navigation**: nearest urgent care/ER/specialists + OSRM routing (walk/drive)
+## What’s included
 
-## Safety & Compliance
+- **Video visit flow**: start/join visits, caregiver invite links
+- **Visit summary**: structured next steps, warning signs, who to see, timeline
+- **Photo upload**: non-diagnostic observations and safety guidance
+- **Medication scanner**: scan OTC labels via live camera feed + OCR, generate a label-based plan, optionally attach to a visit
+- **Care Map**: OpenStreetMap tiles + nearby care search + routing (drive/walk) + transit assist + rideshare links
 
-- **No diagnosis claims**: Language is "possible causes," "I can't diagnose—only a clinician can."
-- **Medication**: General guidance only; no dosing or contraindication guessing; always "check with pharmacist/doctor."
-- **Red-flag triage**: Chest pain, difficulty breathing, stroke symptoms, severe bleeding, head injury with confusion, suicidal ideation, severe allergic reaction → advise call emergency services and stop routine advice.
-- **Privacy**: Treat as sensitive health data; encrypt at rest and in transit; short retention; explicit consent for sharing.
-- **Consent**: Clear screens: "This tool is not a doctor. It offers information and triage support."
+## Tech stack
 
-## Repo Structure
+- **Frontend**: Next.js 14 (App Router), React 18, TailwindCSS, MapLibre GL, Daily (Tavus), Tesseract.js + Fuse.js
+- **Backend**: Node.js + Express, TypeScript, OpenAI (optional), Tavus (optional), OSRM routing (optional)
+
+## Repo structure
 
 ```
 TartanHacks/
-├── backend/          # Express API: visit, triage, vision, maps, audit
-├── frontend/         # Next.js app: senior-first UX, video visit, maps
-├── .env.example
+├── backend/          # Express API (visits, summaries, vision, maps, OTC plan)
+├── frontend/         # Next.js web app
+├── .env.example      # combined env reference (root)
 └── README.md
 ```
 
-## Quick Start
+## Getting started
 
-### Backend
+### 1) Backend
 
 ```bash
 cd backend
-cp .env.example .env   # Add TAVUS_*, OPENAI_*, etc. or use mocks
+cp .env.example .env
 npm install
 npm run dev
 ```
 
-Runs at `http://localhost:4000`. If `tsx watch` fails in your environment, use `npm run build && node dist/index.js` instead.
+Backend runs on `http://localhost:4000` and exposes a health check at `GET /health`.
 
-### Frontend
+### 2) Frontend
 
 ```bash
 cd frontend
-cp .env.local.example .env.local   # Set NEXT_PUBLIC_API_URL=http://localhost:4000
+cp .env.local.example .env.local
 npm install
 npm run dev
 ```
 
-Runs at `http://localhost:3000`.
+Frontend runs on `http://localhost:3000`.
 
-## Tavus “Zoom meeting” mode
+## Environment variables
 
-- **Backend** creates a real Tavus CVI room via `POST /api/visit/start` using `TAVUS_PERSONA_ID` and `TAVUS_REPLICA_ID`.
-- **Frontend** loads a Zoom-like join screen at `/visit/[conversationId]` and joins the Tavus room using Daily’s embedded call frame.
-- **Safety**: the replica is instructed (via conversational context + greeting) to provide *triage guidance and next steps*, not diagnoses.
+Use the example files:
 
-### Caregiver join (public link)
+- **Backend**: copy root `.env.example` → `backend/.env` (or use `backend/.env.example`)
+- **Frontend**: copy `frontend/.env.local.example` → `frontend/.env.local`
 
-- The caregiver link is **`/visit/{conversationId}`**.
-- In local development, to share a link that works on other devices, use a public tunnel:
+Key variables (optional unless you want the real integrations):
 
-```bash
-ngrok http 3000
-```
+- **Tavus**: `TAVUS_API_KEY`, `TAVUS_PERSONA_ID`, `TAVUS_REPLICA_ID` (and `TAVUS_REALTIME_API_KEY` if used by your setup)
+- **LLM** (summary + image analysis): `OPENAI_API_KEY`, `OPENAI_MODEL`
+- **Maps/routing**: `OSRM_BASE_URL` (defaults to the public OSRM server), `MAPBOX_ACCESS_TOKEN` (if enabled)
+- **Sharing links**: set `NEXT_PUBLIC_APP_URL` (ngrok/deployed URL) so invite/share links work off-device
+- **Demo mode**: set `FORCE_MOCK_MEETING=1` to always use the mock meeting room
 
-Then set `NEXT_PUBLIC_APP_URL` in `frontend/.env.local` to your ngrok URL so the “Invite caregiver” button copies a public URL.
+Important:
 
-### Without API Keys
+- **Never commit real API keys**. Keep `.env` / `.env.local` local-only.
+- Browser geolocation typically requires **HTTPS** (localhost is the exception).
 
-- **Tavus**: Uses mock avatar (static video/audio or text-only mode).
-- **Maps/OSRM**: Uses mock nearby results and mock routes when keys missing or OSRM not configured.
-- **Vision**: Uses mock image classification when OpenAI/vision API key missing.
+## Quick demo script
 
-## MVP Demo Script
+1. Go to `/consent` → **Continue to meeting**
+2. Talk in the visit; add utterances if using mock mode
+3. Open **Summary** (`/visit/:id/summary`)
+4. Upload a photo (`/visit/:id/photo`)
+5. Open **Care Map** (`/care-map` or `/visit/:id/care-map`)
+6. Try **Medication scanner** (`/meds`) and optionally attach to a visit
 
-1. Senior clicks **Start Visit**
-2. Accepts consent: "This tool is not a doctor…"
-3. Describes rash/skin concern in plain language
-4. Uploads photo of concern
-5. Receives safe triage: possible causes, warning signs, what to do now
-6. Clicks "Find help near me" → sees nearby dermatologist + route
-7. Ends visit → printable 1-page summary (symptoms, advice, warnings, next steps, nearby options)
+## Key routes
 
-## APIs (Backend)
+- `/` home
+- `/consent` consent gate + start visit
+- `/visit` start/join
+- `/visit/[id]` meeting
+- `/visit/[id]/summary` summary
+- `/visit/[id]/photo` photo upload
+- `/care-map` care map (standalone)
+- `/visit/[id]/care-map` care map embedded with `visitId`
+- `/meds` medication scanner
+- `/visit/invite` caregiver invite link generator
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/visit/start` | Start session → session id |
-| POST | `/visit/:id/message` | Send message → assistant response |
-| POST | `/visit/:id/image` | Upload image → analysis response |
-| GET | `/care/nearby?type=...&lat=...&lng=...` | Nearby providers |
-| GET | `/route?from=...&to=...` | OSRM route (walk/drive) |
+## Backend API (high level)
 
-## Tech Stack
+Common endpoints used by the frontend (paths are **unchanged**):
 
-- **Frontend**: Next.js 14 (App Router), React, Tailwind, senior-friendly UI (large text, high contrast, captions)
-- **Backend**: Node.js, Express, TypeScript
-- **Services**: Tavus (avatar), triage (rules + LLM), vision (classification + OCR), maps (geocode + POI + OSRM), audit (consent + logs)
+- `POST /api/visit/start`
+- `GET /api/visit/:id/summary`
+- `POST /api/visit/:id/utterance`
+- `POST /api/visit/:id/image`
+- `GET /api/geo/geocode`
+- `GET /api/geo/nearby`
+- `GET /api/geo/recommend`
+- `GET /api/geo/route`
+- `POST /api/otc/plan`
+- `POST /api/visit/:conversationId/otc-plan` (attach OTC plan to a visit)
+
+## Safety notes
+
+- Doc.ai provides **triage and education only**. It should always encourage clinician follow-up when appropriate.
+- For emergency symptoms (e.g., chest pain, trouble breathing, stroke symptoms), the UI/agent should advise calling emergency services.
 
 ## License
 

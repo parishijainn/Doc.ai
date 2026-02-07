@@ -422,7 +422,7 @@ export function OtcMedicationScanner(props: {
                     <button
                       key={m.medication.id}
                       className={`w-full text-left rounded-xl border px-4 py-3 ${
-                        selectedMedication?.id === m.medication.id ? 'border-teal-500 bg-teal-50' : 'border-slate-200'
+                        selectedMedication?.id === m.medication.id ? 'border-indigo-300 bg-indigo-50' : 'border-slate-200'
                       }`}
                       onClick={() => setSelectedMedication(m.medication)}
                       type="button"

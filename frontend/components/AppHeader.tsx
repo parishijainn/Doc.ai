@@ -15,12 +15,12 @@ function NavLink({ href, label }: { href: string; label: string }) {
 export function AppHeader() {
   return (
     <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/80 backdrop-blur">
-      <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+      <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between gap-3">
         <Link href="/" className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-sky-500 shadow-sm" />
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-600 to-slate-900 shadow-sm" />
           <div className="leading-tight">
-            <div className="font-extrabold text-slate-900 tracking-tight">CliniView</div>
-            <div className="text-xs text-slate-600">Senior telehealth + care map</div>
+            <div className="font-extrabold text-slate-900 tracking-tight">Doc.ai</div>
+            <div className="text-xs text-slate-600">AI telehealth + care navigation</div>
           </div>
         </Link>
 

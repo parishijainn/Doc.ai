@@ -18,10 +18,10 @@ export default function VisitCareMapPage() {
   }, []);
 
   return (
-    <main className="max-w-6xl mx-auto px-4 py-8 space-y-4">
+    <main className="max-w-7xl mx-auto px-6 py-10 space-y-4">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">Care map</h1>
+          <h1 className="text-2xl md:text-3xl font-semibold tracking-tight text-slate-900">Care map</h1>
           <p className="text-sm text-slate-600 mt-1">
             Visit: <span className="font-mono">{visitId}</span>
           </p>
@@ -46,7 +46,7 @@ export default function VisitCareMapPage() {
             <iframe
               title="Care Map"
               src={`/care-map?visitId=${encodeURIComponent(visitId)}`}
-              className="w-full h-[78vh] rounded-2xl"
+              className="w-full h-[78vh] rounded-xl"
               style={{ opacity: loaded ? 1 : 0, transition: 'opacity 200ms ease' }}
               onLoad={() => setLoaded(true)}
             />

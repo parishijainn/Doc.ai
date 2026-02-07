@@ -73,10 +73,10 @@ export default function VisitPhotoPage() {
   );
 
   return (
-    <main className="max-w-6xl mx-auto px-4 py-8 space-y-6">
+    <main className="max-w-7xl mx-auto px-6 py-10 space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">Photos</h1>
+          <h1 className="text-2xl md:text-3xl font-semibold tracking-tight text-slate-900">Photos</h1>
           <p className="text-sm text-slate-600 mt-1">
             Visit: <span className="font-mono">{visitId}</span>
           </p>
@@ -97,7 +97,7 @@ export default function VisitPhotoPage() {
             <div
               className={[
                 'rounded-2xl border border-dashed p-6 text-center transition',
-                dragOver ? 'border-teal-400 bg-teal-50' : 'border-slate-300 bg-slate-50',
+                dragOver ? 'border-indigo-300 bg-indigo-50' : 'border-slate-300 bg-slate-50',
               ].join(' ')}
               onDragOver={(e) => {
                 e.preventDefault();

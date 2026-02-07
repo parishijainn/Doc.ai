@@ -18,11 +18,11 @@ export default function MedsPage() {
   const effectiveVisitId = useMemo(() => visitId.trim(), [visitId]);
 
   return (
-    <main className="max-w-6xl mx-auto px-4 py-8 space-y-4">
+    <main className="max-w-7xl mx-auto px-6 py-10 space-y-4">
       <div className="flex items-end justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-slate-900">Medication scanner</h1>
-          <p className="text-slate-600 mt-2">Scan an OTC label from the live camera feed and generate a safe, label-based plan.</p>
+          <h1 className="text-2xl md:text-3xl font-semibold tracking-tight text-slate-900">Medication scanner</h1>
+          <p className="text-sm text-slate-600 mt-2">Scan an OTC label from the live camera feed and generate a safe, label-based plan.</p>
         </div>
         <Badge variant="neutral">Camera + OCR</Badge>
       </div>
@@ -42,7 +42,7 @@ export default function MedsPage() {
         </CardHeader>
         <CardContent className="flex flex-col sm:flex-row gap-2 sm:items-center">
           <input
-            className="w-full rounded-xl border border-slate-200 px-4 py-3 text-base"
+            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-4 focus:ring-indigo-100"
             placeholder="Visit ID (e.g. c123...)"
             value={visitId}
             onChange={(e) => setVisitId(e.target.value)}

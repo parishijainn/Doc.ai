@@ -51,11 +51,11 @@ export default function ConsentPage() {
   };
 
   return (
-    <main className="max-w-3xl mx-auto px-4 py-8">
+    <main className="max-w-3xl mx-auto px-6 py-10">
       <div className="flex items-end justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-slate-900">Consent</h1>
-          <p className="text-slate-600 mt-2">A quick safety & privacy summary before starting.</p>
+          <h1 className="text-2xl md:text-3xl font-semibold tracking-tight text-slate-900">Consent</h1>
+          <p className="text-sm text-slate-600 mt-2">A quick safety & privacy summary before starting.</p>
         </div>
         <Badge variant="neutral">Step 1 of 3</Badge>
       </div>

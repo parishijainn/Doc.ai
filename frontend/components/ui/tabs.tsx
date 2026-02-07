@@ -24,7 +24,7 @@ export function Tabs({
             onClick={() => onChange(t.id)}
             className={cn(
               'px-4 py-2 rounded-xl text-sm font-semibold transition whitespace-nowrap',
-              t.id === active.id ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'
+              t.id === active.id ? 'bg-indigo-600 text-white' : 'text-slate-700 hover:bg-slate-100'
             )}
           >
             {t.label}

@@ -54,11 +54,11 @@ export default function InviteCaregiverPage() {
   }, [visitLink]);
 
   return (
-    <main className="max-w-3xl mx-auto px-4 py-8 space-y-6">
+    <main className="max-w-3xl mx-auto px-6 py-10 space-y-6">
       <div className="flex items-end justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-slate-900">Invite a caregiver</h1>
-          <p className="text-slate-600 mt-2">Share a link so family can join from any device.</p>
+          <h1 className="text-2xl md:text-3xl font-semibold tracking-tight text-slate-900">Invite a caregiver</h1>
+          <p className="text-sm text-slate-600 mt-2">Share a link so family can join from any device.</p>
         </div>
         <Badge variant="info">Share link</Badge>
       </div>

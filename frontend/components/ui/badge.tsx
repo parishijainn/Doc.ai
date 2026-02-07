@@ -17,7 +17,7 @@ export function Badge({
     success: 'bg-green-100 text-green-900 border-green-200',
     warning: 'bg-yellow-100 text-yellow-900 border-yellow-200',
     danger: 'bg-red-100 text-red-900 border-red-200',
-    info: 'bg-sky-100 text-sky-900 border-sky-200',
+    info: 'bg-indigo-50 text-indigo-900 border-indigo-200',
   };
   return (
     <span className={cn('inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold', variants[variant], className)}>

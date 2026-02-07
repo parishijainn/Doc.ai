@@ -32,11 +32,11 @@ export default function StartJoinPage() {
   const joinHref = joinId ? `/visit/${encodeURIComponent(joinId)}` : '';
 
   return (
-    <main className="max-w-6xl mx-auto px-4 py-8">
+    <main className="max-w-7xl mx-auto px-6 py-10">
       <div className="flex items-end justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-slate-900">Start or join a visit</h1>
-          <p className="text-slate-600 mt-2">A simple, senior-friendly flow for video triage and care navigation.</p>
+          <h1 className="text-2xl md:text-3xl font-semibold tracking-tight text-slate-900">Start or join a visit</h1>
+          <p className="text-sm text-slate-600 mt-2">A simple flow for video triage and care navigation.</p>
         </div>
         <Badge variant="info">Hackathon demo</Badge>
       </div>

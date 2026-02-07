@@ -6,20 +6,20 @@ import { Button } from '../components/ui/button';
 
 export default function HomePage() {
   return (
-    <main className="max-w-6xl mx-auto px-4 py-10 space-y-10">
+    <main className="max-w-7xl mx-auto px-6 py-12 space-y-12">
       {/* Hero */}
       <section className="grid lg:grid-cols-2 gap-8 items-center">
         <div className="space-y-5">
-          <div className="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-xs font-semibold text-teal-900">
+          <div className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-900">
             <span>Hackathon demo</span>
-            <span className="text-teal-700">•</span>
+            <span className="text-indigo-700">•</span>
             <span>OpenStreetMap + Tavus</span>
           </div>
           <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight text-slate-900">
-            CliniView
+            Doc.ai
           </h1>
           <p className="text-lg md:text-xl text-slate-700">
-            Senior‑friendly telehealth triage + care navigation in minutes.
+            Modern AI‑powered telehealth triage + care navigation in minutes.
           </p>
 
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">

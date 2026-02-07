@@ -55,10 +55,10 @@ export default function MockMeetingPage() {
         : 'This is the local demo room. Add “utterances” here so summaries still work.';
 
   return (
-    <main className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+    <main className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+      <div className="w-full max-w-xl rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
         <div>
-          <div className="text-2xl font-extrabold tracking-tight text-slate-900">Mock meeting</div>
+          <div className="text-2xl font-semibold tracking-tight text-slate-900">Mock meeting</div>
           <div className="text-sm text-slate-600 mt-1">
             Session: <span className="font-mono">{sessionId || '—'}</span>
           </div>
@@ -68,7 +68,7 @@ export default function MockMeetingPage() {
 
         <div className="grid grid-cols-1 sm:grid-cols-[180px_1fr] gap-2 items-center">
           <select
-            className="rounded-xl border border-slate-200 px-4 py-3 text-base focus:outline-none focus:ring-4 focus:ring-slate-200"
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-4 focus:ring-indigo-100"
             value={role}
             onChange={(e) => setRole(e.target.value as any)}
           >
@@ -76,7 +76,7 @@ export default function MockMeetingPage() {
             <option value="replica">Agent</option>
           </select>
           <input
-            className="rounded-xl border border-slate-200 px-4 py-3 text-base focus:outline-none focus:ring-4 focus:ring-slate-200"
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-4 focus:ring-indigo-100"
             placeholder="Type an utterance…"
             value={text}
             onChange={(e) => setText(e.target.value)}
@@ -87,7 +87,7 @@ export default function MockMeetingPage() {
         </div>
 
         <button
-          className="inline-flex items-center justify-center rounded-xl bg-teal-600 text-white px-6 py-4 font-semibold hover:bg-teal-700 disabled:opacity-50"
+          className="inline-flex items-center justify-center rounded-lg bg-indigo-600 text-white px-4 py-2 text-sm font-medium hover:bg-indigo-700 transition-all duration-150 disabled:opacity-50"
           onClick={send}
           disabled={!canSend}
         >

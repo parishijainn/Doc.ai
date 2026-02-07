@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 
 const API = (process.env.NEXT_PUBLIC_API_URL ?? '').trim() || 'http://localhost:4000';
+const DEFAULT_CENTER = { lat: 40.444, lng: -79.945 }; // fallback so the map is always visible
 
 type Capacity = {
   status: 'green' | 'yellow' | 'red';
@@ -242,6 +243,7 @@ export default function CareMapPage() {
   const routeInFlightRef = useRef(false);
 
   const [mounted, setMounted] = useState(false);
+  const [mapReady, setMapReady] = useState(false);
   const [geoPerm, setGeoPerm] = useState<GeoPermissionState>('unknown');
   const [loc, setLoc] = useState<{ lat: number; lng: number } | null>(null);
   const [locStatus, setLocStatus] = useState<'idle' | 'locating' | 'ok' | 'error'>('idle');
@@ -264,6 +266,7 @@ export default function CareMapPage() {
   const [places, setPlaces] = useState<Place[]>([]);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [mobileSheetOpen, setMobileSheetOpen] = useState(true);
 
   const [selected, setSelected] = useState<Place | null>(null);
   const [route, setRoute] = useState<RouteResp | null>(null);
@@ -395,6 +398,12 @@ export default function CareMapPage() {
     mapRef.current = map;
 
     map.on('load', () => {
+      setMapReady(true);
+      // Prevent blank renders when container size changes during init.
+      try {
+        map.resize();
+        window.setTimeout(() => map.resize(), 50);
+      } catch {}
       // Route layer placeholders
       if (!map.getSource('route')) {
         map.addSource('route', {
@@ -407,7 +416,7 @@ export default function CareMapPage() {
           id: 'route-line',
           type: 'line',
           source: 'route',
-          paint: { 'line-color': '#0d9488', 'line-width': 6 },
+          paint: { 'line-color': '#4F46E5', 'line-width': 6 },
         });
       }
       // If we already have a route, draw it now.
@@ -716,7 +725,8 @@ export default function CareMapPage() {
   useEffect(() => {
     (async () => {
       await refreshGeoPermission();
-      const c = await getLocation();
+      await initMap(DEFAULT_CENTER);
+      const c = await getLocation().catch(() => null);
       if (c) {
         await refreshNearby(c);
         await refreshBest(c);
@@ -767,147 +777,106 @@ export default function CareMapPage() {
   };
 
   return (
-    <main className="max-w-6xl mx-auto px-4 py-8 space-y-4">
-        <header className="bg-white border-2 border-slate-200 rounded-xl p-4 flex flex-col lg:flex-row gap-3 items-start lg:items-center justify-between">
-          <div>
-            <h1 className="text-senior-2xl font-bold text-slate-900">Care Map</h1>
-            <p className="text-senior text-slate-700">{locationText}</p>
-            <p className="text-sm text-slate-600 mt-1">Location permission: {geoPerm}</p>
-            {locError && <p className="text-sm text-red-700 mt-1 break-words">{locError}</p>}
-            {geoPerm === 'unknown' ? (
-              <p className="text-sm text-slate-600 mt-1">
-                Some browsers don’t report permission status. If “Update location” keeps timing out, use the manual location box below.
-              </p>
-            ) : null}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              className="senior-btn-secondary"
-              onClick={updateLocationAndRefresh}
-              disabled={locStatus === 'locating'}
-            >
-              {locStatus === 'locating' ? 'Locating…' : 'Update location'}
-            </button>
-            <button className="senior-btn-secondary" onClick={refreshGeoPermission}>
-              Check permission
-            </button>
-            <button className="senior-btn-secondary" onClick={copyCaregiver}>
-              Share with caregiver
-            </button>
-          </div>
-        </header>
+    <main className="h-[calc(100vh-56px)] bg-slate-50">
+      <div className="h-full lg:grid lg:grid-cols-[420px_1fr]">
+        {/* Sidebar */}
+        <aside className="hidden lg:block border-r border-slate-200 bg-slate-50">
+          <div className="h-full overflow-y-auto p-4 space-y-4">
+            <header className="bg-white border border-slate-200 rounded-xl p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h1 className="text-lg font-semibold tracking-tight text-slate-900">Care Map</h1>
+                  <p className="text-sm text-slate-600 truncate">{locationText}</p>
+                  <p className="text-xs text-slate-500 mt-1">Location permission: {geoPerm}</p>
+                  {locError && <p className="text-xs text-amber-900 mt-2 break-words">{locError}</p>}
+                </div>
+                <div className="flex flex-col gap-2">
+                  <button className="senior-btn-secondary" onClick={updateLocationAndRefresh} disabled={locStatus === 'locating'}>
+                    {locStatus === 'locating' ? 'Locating…' : 'Locate'}
+                  </button>
+                  <button className="senior-btn-secondary" onClick={() => { refreshNearby().catch(() => {}); refreshBest().catch(() => {}); }} disabled={!loc || busy}>
+                    {busy ? 'Refreshing…' : 'Refresh'}
+                  </button>
+                  <button className="senior-btn" onClick={copyCaregiver}>
+                    Share
+                  </button>
+                </div>
+              </div>
+              {geoPerm === 'unknown' ? (
+                <p className="text-xs text-slate-500 mt-2">
+                  If location keeps timing out, use manual location below.
+                </p>
+              ) : null}
+            </header>
 
-        {/* Manual location fallback */}
-        <section className="bg-white border-2 border-slate-200 rounded-xl p-4">
-          <p className="font-bold text-senior-lg">Manual location</p>
-          <p className="text-sm text-slate-600 mt-1">If automatic location fails, type a ZIP code or address.</p>
-          <div className="mt-3 grid grid-cols-1 lg:grid-cols-3 gap-2 items-center">
-            <input
-              className="senior-input max-w-none lg:col-span-2"
-              value={manualQuery}
-              onChange={(e) => setManualQuery(e.target.value)}
-              placeholder="e.g. 15213 Pittsburgh PA or 5000 Forbes Ave Pittsburgh"
-            />
-            <button className="senior-btn-secondary w-full !min-w-0" onClick={setLocationFromAddress} disabled={manualBusy}>
-              {manualBusy ? 'Searching…' : 'Set location'}
-            </button>
-          </div>
-        </section>
+            {/* Manual location */}
+            <section className="bg-white border border-slate-200 rounded-xl p-4">
+              <p className="font-semibold text-slate-900">Manual location</p>
+              <p className="text-xs text-slate-500 mt-1">ZIP code or address</p>
+              <div className="mt-3 grid grid-cols-1 gap-2">
+                <input
+                  className="senior-input max-w-none"
+                  value={manualQuery}
+                  onChange={(e) => setManualQuery(e.target.value)}
+                  placeholder="e.g. 15213 Pittsburgh PA"
+                />
+                <button className="senior-btn-secondary w-full !min-w-0" onClick={setLocationFromAddress} disabled={manualBusy}>
+                  {manualBusy ? 'Searching…' : 'Set location'}
+                </button>
+              </div>
+            </section>
 
-        {note && (
-          <div className="bg-white border border-slate-200 rounded-xl p-4 text-senior text-slate-700">
-            {note}
-            {shareUrl && (
-              <div className="mt-2 break-all text-sm text-slate-600">
-                Caregiver link: <span className="font-mono">{shareUrl}</span>
+            {note && (
+              <div className="bg-white border border-slate-200 rounded-xl p-4 text-sm text-slate-700">
+                {note}
+                {shareUrl && (
+                  <div className="mt-2 break-all text-xs text-slate-500">
+                    Caregiver link: <span className="font-mono">{shareUrl}</span>
+                  </div>
+                )}
               </div>
             )}
-          </div>
-        )}
 
-        {/* Best option card */}
-        <section className="bg-white border-2 border-slate-200 rounded-xl p-4">
-          <div className="flex flex-col lg:flex-row gap-4 lg:items-center justify-between">
-            <div>
-              <p className="font-bold text-senior-lg">Best option for you</p>
-              {bestPlace ? (
-                <div className="mt-2 text-senior text-slate-800">
-                  <div className="font-semibold">{bestPlace.name}</div>
-                  <div className="text-slate-600">
-                    {typeLabel(bestPlace.type)} • {fmtMi(bestPlace.distanceMeters)} • ETA {fmtMin(bestPlace.etaSeconds)}
-                  </div>
-                  {bestPlace.capacity && (
-                    <div className="mt-2 inline-flex items-center gap-2">
-                      <span className={`px-3 py-1 rounded-full border text-sm ${capBadgeClasses(bestPlace.capacity.status)}`}>
-                        {bestPlace.capacity.status.toUpperCase()} • {bestPlace.capacity.acceptingPatients ? 'Accepting' : 'Not accepting'}
-                      </span>
+            {/* Best option */}
+            <section className="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-indigo-900">Best option for you</p>
+                  {bestPlace ? (
+                    <div className="mt-1 text-sm text-slate-900">
+                      <div className="font-semibold truncate">{bestPlace.name}</div>
+                      <div className="text-xs text-slate-600">
+                        {typeLabel(bestPlace.type)} • {fmtMi(bestPlace.distanceMeters)} • ETA {fmtMin(bestPlace.etaSeconds)}
+                      </div>
                     </div>
+                  ) : (
+                    <p className="text-sm text-slate-700 mt-1">Loading recommendation…</p>
                   )}
                 </div>
-              ) : (
-                <p className="text-senior text-slate-700 mt-2">Loading recommendation…</p>
-              )}
-            </div>
-
-            <div className="grid gap-2 w-full lg:w-[420px]">
-              <label className="text-sm text-slate-700 font-medium">Urgency</label>
-              <select className="senior-input max-w-none" value={severity} onChange={(e) => setSeverity(e.target.value as any)}>
-                <option value="routine">Routine</option>
-                <option value="soon">Soon (same/next day)</option>
-                <option value="emergency">Emergency</option>
-              </select>
-
-              {visitId ? (
-                <label className="mt-2 flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg p-3">
-                  <input
-                    type="checkbox"
-                    checked={useVisitNeeds}
-                    onChange={(e) => setUseVisitNeeds(e.target.checked)}
-                    className="w-5 h-5"
-                  />
-                  <span className="text-sm">
-                    Use my visit needs {visitNeedsBusy ? '(loading…) ' : ''}
-                    <span className="text-slate-500">(from summary)</span>
-                  </span>
-                </label>
-              ) : (
-                <div className="mt-2 text-xs text-slate-500">
-                  Tip: open the map with <span className="font-mono">?visitId=&lt;id&gt;</span> to enable “Use my visit needs”.
-                </div>
-              )}
-
-              <label className="text-sm text-slate-700 font-medium mt-2">Specialty needs (optional)</label>
-              <div className="grid grid-cols-2 gap-2">
-                {Object.entries(needSpec).map(([k, v]) => (
-                  <label key={k} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg p-3">
-                    <input
-                      type="checkbox"
-                      checked={v}
-                      onChange={(e) => setNeedSpec((prev) => ({ ...prev, [k]: e.target.checked }))}
-                      className="w-5 h-5"
-                    />
-                    <span className="text-sm">{k.replace('_', ' ')}</span>
-                  </label>
-                ))}
+                <button
+                  className="senior-btn !min-w-0"
+                  onClick={() => (bestPlace ? routeTo(bestPlace, routeMode) : null)}
+                  disabled={!bestPlace || !loc || routeBusy}
+                >
+                  Route
+                </button>
               </div>
-            </div>
-          </div>
+              {best.reasoning?.length ? (
+                <ul className="mt-3 list-disc pl-5 text-xs text-slate-700 space-y-1">
+                  {best.reasoning.slice(0, 3).map((r, i) => (
+                    <li key={i}>{r}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </section>
 
-          {best.reasoning?.length ? (
-            <ul className="mt-3 list-disc pl-6 text-senior text-slate-700">
-              {best.reasoning.map((r, i) => (
-                <li key={i}>{r}</li>
-              ))}
-            </ul>
-          ) : null}
-        </section>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Left panel */}
-          <aside className="bg-white border-2 border-slate-200 rounded-xl p-4 space-y-4">
-            <div>
-              <p className="font-bold text-senior-lg">Filters</p>
-              <div className="grid gap-2 mt-2">
+            {/* Filters + radius */}
+            <section className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="font-semibold text-slate-900">Filters</p>
+                <div className="text-xs text-slate-500">Radius</div>
+              </div>
+              <div className="grid gap-2">
                 {(
                   [
                     ['hospital', 'Hospitals / ER'],
@@ -918,24 +887,18 @@ export default function CareMapPage() {
                     ['transit', 'Transit'],
                   ] as const
                 ).map(([key, label]) => (
-                  <label key={key} className="flex items-center gap-3">
+                  <label key={key} className="flex items-center justify-between gap-3">
+                    <span className="text-sm text-slate-700">{label}</span>
                     <input
                       type="checkbox"
                       checked={(filters as any)[key]}
                       onChange={(e) => setFilters((prev) => ({ ...prev, [key]: e.target.checked }))}
-                      className="w-6 h-6"
+                      className="h-4 w-4 accent-indigo-600"
                     />
-                    <span className="text-senior">{label}</span>
                   </label>
                 ))}
               </div>
-            </div>
-
-            <div className="pt-2 border-t border-slate-200" />
-
-            <div>
-              <p className="font-bold text-senior-lg">Radius</p>
-              <div className="grid grid-cols-3 gap-2 mt-2">
+              <div className="grid grid-cols-3 gap-2">
                 {[2, 5, 10].map((mi) => (
                   <button
                     key={mi}
@@ -946,308 +909,320 @@ export default function CareMapPage() {
                   </button>
                 ))}
               </div>
+            </section>
+
+            {/* Results */}
+            <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+              <div className="p-4 border-b border-slate-200 flex items-center justify-between">
+                <div>
+                  <p className="font-semibold text-slate-900">Results</p>
+                  <p className="text-xs text-slate-500 mt-0.5">Tap a pin or a row to view.</p>
+                </div>
+                <button className="senior-btn-secondary !min-w-0" onClick={() => refreshNearby()} disabled={!loc || busy}>
+                  {busy ? 'Updating…' : 'Refresh'}
+                </button>
+              </div>
+              <ul className="divide-y divide-slate-200 max-h-[46vh] overflow-y-auto">
+                {places.length ? (
+                  places.map((p) => (
+                    <li key={p.id} className={selected?.id === p.id ? 'bg-slate-50 border-l-4 border-indigo-600' : 'hover:bg-slate-50'}>
+                      <button
+                        className="text-left w-full p-4"
+                        onClick={() => {
+                          setSelected(p);
+                          mapRef.current?.flyTo({ center: [p.lng, p.lat], zoom: 14 });
+                        }}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="font-semibold text-slate-900 truncate">{p.name}</div>
+                            <div className="text-xs text-slate-600 truncate">{typeLabel(p.type)} • {p.address || '—'}</div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <div className="text-xs font-semibold text-slate-900">{fmtMi(p.distanceMeters)}</div>
+                            <div className="text-xs text-slate-600">{fmtMin(p.etaSeconds)}</div>
+                            {p.type === 'hospital' ? (
+                              <div className="mt-1">
+                                <span className={`px-2 py-0.5 rounded-full border text-[10px] ${capBadgeClasses(p.capacity?.status)}`}>
+                                  {p.capacity?.status ? p.capacity.status.toUpperCase() : '—'}
+                                </span>
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      </button>
+                      <div className="px-4 pb-4 grid grid-cols-2 gap-2">
+                        <button className="senior-btn-secondary !min-w-0" onClick={() => routeTo(p, routeMode)} disabled={!loc || routeBusy}>
+                          {routeBusy ? 'Routing…' : 'Route'}
+                        </button>
+                        {p.phone ? (
+                          <a className="senior-btn-secondary !min-w-0 text-center" href={`tel:${p.phone}`}>
+                            Call
+                          </a>
+                        ) : (
+                          <button className="senior-btn-secondary !min-w-0" disabled>
+                            Call
+                          </button>
+                        )}
+                        {p.website ? (
+                          <a className="senior-btn-secondary !min-w-0 text-center col-span-2" href={p.website} target="_blank" rel="noreferrer">
+                            Website
+                          </a>
+                        ) : (
+                          <button className="senior-btn-secondary !min-w-0 col-span-2" disabled>
+                            Website
+                          </button>
+                        )}
+                      </div>
+                    </li>
+                  ))
+                ) : (
+                  <li className="p-4 text-sm text-slate-600">No places found in this radius. Try 10 mi.</li>
+                )}
+              </ul>
+            </section>
+          </div>
+        </aside>
+
+        {/* Map hero */}
+        <section className="relative h-full">
+          <div className="absolute inset-0 p-3 lg:p-4">
+            <div className="relative h-full rounded-2xl border border-slate-200 bg-white overflow-hidden">
+              <div ref={mapContainerRef} className="absolute inset-0" />
+
+              {!mapReady ? (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="rounded-xl border border-slate-200 bg-white/90 backdrop-blur px-4 py-3 shadow-sm">
+                    <div className="text-sm font-semibold text-slate-900">Loading map…</div>
+                    <div className="text-xs text-slate-600 mt-1">If location is blocked, use manual location in the sidebar.</div>
+                  </div>
+                </div>
+              ) : null}
+
+              {routeMode === 'transit' && transitPlan ? (
+                <div className="absolute top-3 left-3 rounded-xl border border-slate-200 bg-white/90 backdrop-blur px-3 py-2 text-xs text-slate-700 shadow-sm">
+                  Transit assist • schedule-dependent
+                </div>
+              ) : route ? (
+                <div className="absolute top-3 left-3 rounded-xl border border-slate-200 bg-white/90 backdrop-blur px-3 py-2 text-xs text-slate-700 shadow-sm">
+                  Route: {fmtMi(route.distanceMeters)} • ETA {fmtMin(route.durationSeconds)}
+                </div>
+              ) : null}
+
+              {/* Mobile bottom sheet controls */}
+              <div className="lg:hidden absolute left-0 right-0 bottom-0 p-3">
+                <div
+                  className={[
+                    'rounded-2xl border border-slate-200 bg-white/95 backdrop-blur shadow-lg overflow-hidden transition-[height] duration-200',
+                    mobileSheetOpen ? 'h-[62vh]' : 'h-14',
+                  ].join(' ')}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setMobileSheetOpen((v) => !v)}
+                    className="w-full px-4 py-3 flex items-center justify-between"
+                  >
+                    <div className="text-sm font-semibold text-slate-900">Care Map</div>
+                    <div className="text-xs text-slate-600">{mobileSheetOpen ? 'Collapse' : 'Expand'}</div>
+                  </button>
+
+                  {mobileSheetOpen ? (
+                    <div className="px-4 pb-4 space-y-3 overflow-y-auto h-[calc(62vh-48px)]">
+                      <div className="text-xs text-slate-500 truncate">{locationText}</div>
+                      {locError ? <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">{locError}</div> : null}
+                      {note ? <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">{note}</div> : null}
+
+                      <div className="flex flex-wrap gap-2">
+                        <button className="senior-btn-secondary !min-w-0" onClick={updateLocationAndRefresh} disabled={locStatus === 'locating'}>
+                          {locStatus === 'locating' ? 'Locating…' : 'Locate'}
+                        </button>
+                        <button className="senior-btn-secondary !min-w-0" onClick={() => { refreshNearby().catch(() => {}); refreshBest().catch(() => {}); }} disabled={!loc || busy}>
+                          {busy ? 'Refreshing…' : 'Refresh'}
+                        </button>
+                        <button className="senior-btn !min-w-0" onClick={copyCaregiver}>
+                          Share
+                        </button>
+                      </div>
+
+                      <div className="rounded-xl border border-slate-200 bg-white p-3">
+                        <div className="text-xs font-semibold text-slate-700">Manual location</div>
+                        <div className="mt-2 flex gap-2">
+                          <input
+                            className="senior-input max-w-none"
+                            value={manualQuery}
+                            onChange={(e) => setManualQuery(e.target.value)}
+                            placeholder="ZIP / address"
+                          />
+                          <button className="senior-btn-secondary !min-w-0" onClick={setLocationFromAddress} disabled={manualBusy}>
+                            {manualBusy ? '…' : 'Set'}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="text-xs font-semibold text-slate-700">Filters</div>
+                          <div className="text-xs text-slate-500">Radius</div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          {(
+                            [
+                              ['hospital', 'Hospitals'],
+                              ['urgent_care', 'Urgent care'],
+                              ['primary_care', 'Clinics'],
+                              ['specialist', 'Specialists'],
+                              ['pharmacy', 'Pharmacies'],
+                              ['transit', 'Transit'],
+                            ] as const
+                          ).map(([key, label]) => (
+                            <label key={key} className="flex items-center justify-between gap-2 text-xs text-slate-700">
+                              <span>{label}</span>
+                              <input
+                                type="checkbox"
+                                checked={(filters as any)[key]}
+                                onChange={(e) => setFilters((prev) => ({ ...prev, [key]: e.target.checked }))}
+                                className="h-4 w-4 accent-indigo-600"
+                              />
+                            </label>
+                          ))}
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          {[2, 5, 10].map((mi) => (
+                            <button
+                              key={mi}
+                              className={mi === radiusMi ? 'senior-btn w-full !min-w-0' : 'senior-btn-secondary w-full !min-w-0'}
+                              onClick={() => setRadiusMi(mi as any)}
+                            >
+                              {mi} mi
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                        <div className="px-3 py-2 border-b border-slate-200 flex items-center justify-between">
+                          <div className="text-xs font-semibold text-slate-700">Results</div>
+                          <button className="senior-btn-secondary !min-w-0" onClick={() => refreshNearby()} disabled={!loc || busy}>
+                            {busy ? '…' : 'Refresh'}
+                          </button>
+                        </div>
+                        <ul className="divide-y divide-slate-200 max-h-[28vh] overflow-y-auto">
+                          {places.length ? (
+                            places.map((p) => (
+                              <li key={p.id}>
+                                <button
+                                  type="button"
+                                  className="w-full text-left px-3 py-3 hover:bg-slate-50"
+                                  onClick={() => {
+                                    setSelected(p);
+                                    mapRef.current?.flyTo({ center: [p.lng, p.lat], zoom: 14 });
+                                    setMobileSheetOpen(false);
+                                  }}
+                                >
+                                  <div className="font-semibold text-slate-900 truncate">{p.name}</div>
+                                  <div className="text-[11px] text-slate-600 truncate">
+                                    {typeLabel(p.type)} • {fmtMi(p.distanceMeters)} • {fmtMin(p.etaSeconds)}
+                                  </div>
+                                </button>
+                              </li>
+                            ))
+                          ) : (
+                            <li className="px-3 py-3 text-sm text-slate-600">No results found. Try 10 mi.</li>
+                          )}
+                        </ul>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
             </div>
+          </div>
+        </section>
+      </div>
 
-            <div className="pt-2 border-t border-slate-200" />
-
-            <div className="flex gap-2">
-              <button className="senior-btn-secondary w-full !min-w-0" onClick={() => refreshNearby()} disabled={!loc || busy}>
-                {busy ? 'Updating…' : 'Refresh results'}
+      {/* Modal (kept) */}
+      {selected && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4" onClick={() => setSelected(null)}>
+          <div className="bg-white rounded-xl max-w-xl w-full p-5 border border-slate-200" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-xl font-semibold tracking-tight text-slate-900">{selected.name}</div>
+                <div className="text-sm text-slate-700 mt-1">
+                  {typeLabel(selected.type)} • {fmtMi(selected.distanceMeters)} • ETA {fmtMin(selected.etaSeconds)}
+                </div>
+                {selected.address ? <div className="text-sm text-slate-600 mt-1">{selected.address}</div> : null}
+              </div>
+              <button className="senior-btn-secondary !min-w-0 px-3 py-2" onClick={() => setSelected(null)}>
+                Close
               </button>
             </div>
 
-            <div className="pt-2 border-t border-slate-200" />
-
-            <div>
-              <p className="font-bold text-senior-lg">Results</p>
-              <p className="text-sm text-slate-600 mt-1">Tap a pin or a card to see details.</p>
-
-              <ul className="mt-3 space-y-2 max-h-[50vh] overflow-y-auto">
-                {places.map((p) => (
-                  <li key={p.id} className="border border-slate-200 rounded-xl p-3">
-                    <button
-                      className="text-left w-full"
-                      onClick={() => {
-                        setSelected(p);
-                        mapRef.current?.flyTo({ center: [p.lng, p.lat], zoom: 14 });
-                      }}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <div className="font-semibold text-senior">{p.name}</div>
-                          <div className="text-sm text-slate-600">
-                            {typeLabel(p.type)} • {fmtMi(p.distanceMeters)} • ETA {fmtMin(p.etaSeconds)}
-                          </div>
-                        </div>
-                        {p.type === 'hospital' ? (
-                          <span className={`px-3 py-1 rounded-full border text-sm ${capBadgeClasses(p.capacity?.status)}`}>
-                            {p.capacity?.status ? p.capacity.status.toUpperCase() : '—'}
-                          </span>
-                        ) : null}
-                      </div>
-                      {Array.isArray(p.specialties) && p.specialties.length ? (
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {p.specialties.slice(0, 6).map((s) => (
-                            <span key={s} className="px-2 py-1 rounded-lg bg-slate-100 text-slate-800 text-xs border border-slate-200">
-                              {shortSpecialty(s)}
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
-                    </button>
-
-                    <div className="grid grid-cols-2 gap-2 mt-3">
-                      <button className="senior-btn-secondary !min-w-0" onClick={() => routeTo(p, routeMode)} disabled={!loc || routeBusy}>
-                        {routeBusy ? 'Routing…' : 'Route'}
-                      </button>
-                      {p.phone ? (
-                        <a className="senior-btn-secondary !min-w-0 text-center" href={`tel:${p.phone}`}>
-                          Call
-                        </a>
-                      ) : (
-                        <button className="senior-btn-secondary !min-w-0" disabled>
-                          Call
-                        </button>
-                      )}
-                      {p.website ? (
-                        <a className="senior-btn-secondary !min-w-0 text-center col-span-2" href={p.website} target="_blank" rel="noreferrer">
-                          Website
-                        </a>
-                      ) : (
-                        <button className="senior-btn-secondary !min-w-0 col-span-2" disabled>
-                          Website
-                        </button>
-                      )}
-                    </div>
-                  </li>
+            <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="text-sm font-semibold text-slate-700">Route mode</div>
+              <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {(['drive', 'walk', 'transit', 'rideshare'] as RouteMode[]).map((m) => (
+                  <button
+                    key={m}
+                    className={m === routeMode ? 'senior-btn w-full !min-w-0' : 'senior-btn-secondary w-full !min-w-0'}
+                    onClick={() => routeTo(selected, m)}
+                    disabled={!loc || routeBusy}
+                  >
+                    {modeLabel(m)}
+                  </button>
                 ))}
-              </ul>
-            </div>
-          </aside>
-
-          {/* Map */}
-          <section className="lg:col-span-2 bg-white border-2 border-slate-200 rounded-xl overflow-hidden">
-            <div className="p-3 border-b border-slate-200 flex flex-wrap gap-2 items-center justify-between">
-              <p className="font-bold text-senior-lg">Map</p>
-              {routeMode === 'transit' && transitPlan ? (
-                <div className="text-sm text-slate-700">
-                  Transit assist • walk segments shown • <span className="text-slate-500">schedule-dependent</span>
-                </div>
-              ) : route ? (
-                <div className="text-senior text-slate-700">
-                  Route: {fmtMi(route.distanceMeters)} • ETA {fmtMin(route.durationSeconds)}
-                </div>
-              ) : (
-                <div className="text-sm text-slate-600">Select a place, then choose a route mode.</div>
-              )}
-            </div>
-            <div ref={mapContainerRef} className="w-full h-[70vh] lg:h-[78vh]" />
-          </section>
-        </div>
-
-        {/* Modal */}
-        {selected && (
-          <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4" onClick={() => setSelected(null)}>
-            <div className="bg-white rounded-2xl max-w-xl w-full p-5 border-2 border-slate-200" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="text-senior-2xl font-bold">{selected.name}</div>
-                  <div className="text-senior text-slate-700 mt-1">
-                    {typeLabel(selected.type)} • {fmtMi(selected.distanceMeters)} • ETA {fmtMin(selected.etaSeconds)}
-                  </div>
-                  {selected.address ? <div className="text-sm text-slate-600 mt-1">{selected.address}</div> : null}
-                </div>
-                <button className="senior-btn-secondary !min-w-0 px-4 py-2" onClick={() => setSelected(null)}>
-                  Close
-                </button>
               </div>
+              <div className="mt-2 text-xs text-slate-600">
+                Transit is best-effort (no schedules). Rideshare opens Uber/Lyft.
+              </div>
+            </div>
 
-              <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <div className="text-sm font-semibold text-slate-700">Route mode</div>
-                <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {(['drive', 'walk', 'transit', 'rideshare'] as RouteMode[]).map((m) => (
-                    <button
-                      key={m}
-                      className={m === routeMode ? 'senior-btn w-full !min-w-0' : 'senior-btn-secondary w-full !min-w-0'}
-                      onClick={() => routeTo(selected, m)}
-                      disabled={!loc || routeBusy}
-                    >
-                      {modeLabel(m)}
-                    </button>
+            {selected.type === 'hospital' && selected.capacity ? (
+              <div className="mt-3 flex flex-wrap gap-2 items-center">
+                <span className={`px-3 py-1 rounded-full border text-sm ${capBadgeClasses(selected.capacity.status)}`}>
+                  {selected.capacity.status.toUpperCase()}
+                </span>
+                <span className="text-sm text-slate-700">
+                  {selected.capacity.acceptingPatients ? 'Accepting patients' : 'Not accepting patients'}
+                </span>
+                <span className="text-sm text-slate-600">Beds open: {selected.capacity.bedsOpen}</span>
+              </div>
+            ) : null}
+
+            {Array.isArray(selected.specialties) && selected.specialties.length ? (
+              <div className="mt-3">
+                <div className="font-semibold">Specialties</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {selected.specialties.slice(0, 12).map((s) => (
+                    <span key={s} className="px-2 py-1 rounded-lg bg-slate-100 text-slate-800 text-xs border border-slate-200">
+                      {shortSpecialty(s)}
+                    </span>
                   ))}
                 </div>
-                <div className="mt-2 text-xs text-slate-600">
-                  Transit is best-effort (no schedules). Rideshare opens Uber/Lyft.
-                </div>
               </div>
+            ) : null}
 
-              {selected.type === 'hospital' && selected.capacity ? (
-                <div className="mt-3 flex flex-wrap gap-2 items-center">
-                  <span className={`px-3 py-1 rounded-full border text-sm ${capBadgeClasses(selected.capacity.status)}`}>
-                    {selected.capacity.status.toUpperCase()}
-                  </span>
-                  <span className="text-sm text-slate-700">
-                    {selected.capacity.acceptingPatients ? 'Accepting patients' : 'Not accepting patients'}
-                  </span>
-                  <span className="text-sm text-slate-600">Beds open: {selected.capacity.bedsOpen}</span>
-                </div>
-              ) : null}
-
-              {Array.isArray(selected.specialties) && selected.specialties.length ? (
-                <div className="mt-3">
-                  <div className="font-semibold text-senior-lg">Specialties</div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {selected.specialties.slice(0, 12).map((s) => (
-                      <span key={s} className="px-2 py-1 rounded-lg bg-slate-100 text-slate-800 text-xs border border-slate-200">
-                        {shortSpecialty(s)}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-
-              <div className="grid grid-cols-2 gap-2 mt-4">
-                <button className="senior-btn-secondary !min-w-0" onClick={() => routeTo(selected, routeMode)} disabled={!loc || routeBusy}>
-                  {routeBusy ? 'Loading…' : routeMode === 'rideshare' ? 'Refresh estimate' : 'Get directions'}
+            <div className="grid grid-cols-2 gap-2 mt-4">
+              <button className="senior-btn-secondary !min-w-0" onClick={() => routeTo(selected, routeMode)} disabled={!loc || routeBusy}>
+                {routeBusy ? 'Loading…' : routeMode === 'rideshare' ? 'Refresh estimate' : 'Get directions'}
+              </button>
+              {selected.phone ? (
+                <a className="senior-btn-secondary !min-w-0 text-center" href={`tel:${selected.phone}`}>
+                  Call
+                </a>
+              ) : (
+                <button className="senior-btn-secondary !min-w-0" disabled>
+                  Call
                 </button>
-                {selected.phone ? (
-                  <a className="senior-btn-secondary !min-w-0 text-center" href={`tel:${selected.phone}`}>
-                    Call
-                  </a>
-                ) : (
-                  <button className="senior-btn-secondary !min-w-0" disabled>
-                    Call
-                  </button>
-                )}
-                {selected.website ? (
-                  <a className="senior-btn-secondary !min-w-0 text-center col-span-2" href={selected.website} target="_blank" rel="noreferrer">
-                    Website
-                  </a>
-                ) : null}
-              </div>
-
-              {routeMode === 'rideshare' && loc ? (
-                <div className="mt-4">
-                  <div className="font-semibold text-senior-lg">Rideshare</div>
-                  {driveEstimate ? (
-                    <div className="text-sm text-slate-700 mt-1">
-                      Estimated drive: {fmtMi(driveEstimate.distanceMeters)} • {fmtMin(driveEstimate.durationSeconds)}
-                      {driveEstimate.fallback ? ' (approx.)' : ''}
-                    </div>
-                  ) : (
-                    <div className="text-sm text-slate-600 mt-1">Loading estimate…</div>
-                  )}
-                  <div className="grid grid-cols-2 gap-2 mt-3">
-                    <a
-                      className="senior-btn-secondary !min-w-0 text-center"
-                      href={uberDeepLink(loc, { lat: selected.lat, lng: selected.lng }, selected.name)}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Book with Uber
-                    </a>
-                    <a
-                      className="senior-btn-secondary !min-w-0 text-center"
-                      href={lyftDeepLink(loc, { lat: selected.lat, lng: selected.lng })}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Book with Lyft
-                    </a>
-                  </div>
-                  <div className="text-xs text-slate-600 mt-2">
-                    Tip: booking opens the Uber/Lyft app or website. No prices are shown here.
-                  </div>
-                </div>
-              ) : null}
-
-              {routeMode === 'transit' && loc ? (
-                <div className="mt-4">
-                  <div className="font-semibold text-senior-lg">Transit assist (best-effort)</div>
-                  {transitPlan ? (
-                    <div className="mt-2 space-y-3">
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-800">
-                        {transitPlan.suggested?.note}
-                      </div>
-
-                      {transitPlan.suggested?.startStop || transitPlan.suggested?.endStop ? (
-                        <div className="rounded-xl border border-slate-200 p-4">
-                          <div className="font-semibold text-slate-800">Suggested plan</div>
-                          <ol className="mt-2 space-y-2 text-sm text-slate-800">
-                            <li>
-                              1) Walk to <span className="font-semibold">{transitPlan.suggested?.startStop?.name ?? 'a nearby stop'}</span>{' '}
-                              {transitPlan.suggested?.walkToStart ? `(${fmtMin(transitPlan.suggested.walkToStart.durationSeconds)})` : ''}
-                            </li>
-                            <li>2) Ride transit toward the destination area (schedule-dependent)</li>
-                            <li>
-                              3) Walk from <span className="font-semibold">{transitPlan.suggested?.endStop?.name ?? 'a stop near the destination'}</span>{' '}
-                              {transitPlan.suggested?.walkFromEnd ? `(${fmtMin(transitPlan.suggested.walkFromEnd.durationSeconds)})` : ''}
-                            </li>
-                          </ol>
-                        </div>
-                      ) : null}
-
-                      <div className="grid grid-cols-2 gap-2">
-                        <a className="senior-btn-secondary !min-w-0 text-center" href={appleTransitLink(loc, { lat: selected.lat, lng: selected.lng })} target="_blank" rel="noreferrer">
-                          Open Apple Maps (Transit)
-                        </a>
-                        <a className="senior-btn-secondary !min-w-0 text-center" href={googleTransitLink(loc, { lat: selected.lat, lng: selected.lng })} target="_blank" rel="noreferrer">
-                          Open Google Maps (Transit)
-                        </a>
-                      </div>
-
-                      <div className="grid md:grid-cols-2 gap-3">
-                        <div className="rounded-xl border border-slate-200 p-4">
-                          <div className="font-semibold text-slate-800">Stops near you</div>
-                          <ul className="mt-2 space-y-2 text-sm">
-                            {(transitPlan.fromStops ?? []).slice(0, 5).map((s) => (
-                              <li key={s.id} className="text-slate-800">
-                                <span className="font-semibold">{s.name}</span>{' '}
-                                <span className="text-slate-600">({transitKindLabel(s.kind)})</span>
-                              </li>
-                            ))}
-                            {!transitPlan.fromStops?.length ? <li className="text-slate-600">No stops found nearby.</li> : null}
-                          </ul>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 p-4">
-                          <div className="font-semibold text-slate-800">Stops near destination</div>
-                          <ul className="mt-2 space-y-2 text-sm">
-                            {(transitPlan.toStops ?? []).slice(0, 5).map((s) => (
-                              <li key={s.id} className="text-slate-800">
-                                <span className="font-semibold">{s.name}</span>{' '}
-                                <span className="text-slate-600">({transitKindLabel(s.kind)})</span>
-                              </li>
-                            ))}
-                            {!transitPlan.toStops?.length ? <li className="text-slate-600">No stops found near destination.</li> : null}
-                          </ul>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-sm text-slate-600 mt-2">Loading transit plan…</div>
-                  )}
-                </div>
-              ) : null}
-
-              {routeMode !== 'transit' && route?.steps?.length ? (
-                <div className="mt-4">
-                  <div className="font-semibold text-senior-lg">Turn-by-turn</div>
-                  <ol className="mt-2 space-y-2 max-h-52 overflow-y-auto pr-1">
-                    {route.steps.slice(0, 14).map((s, i) => (
-                      <li key={i} className="border border-slate-200 rounded-lg p-3 text-senior text-slate-800">
-                        <div className="font-semibold">Step {i + 1}</div>
-                        <div className="text-slate-700">{s.instruction}</div>
-                        <div className="text-sm text-slate-600 mt-1">
-                          {fmtMi(s.distanceMeters)} • {fmtMin(s.durationSeconds)}
-                        </div>
-                      </li>
-                    ))}
-                  </ol>
-                </div>
+              )}
+              {selected.website ? (
+                <a className="senior-btn-secondary !min-w-0 text-center col-span-2" href={selected.website} target="_blank" rel="noreferrer">
+                  Website
+                </a>
               ) : null}
             </div>
           </div>
-        )}
+        </div>
+      )}
     </main>
   );
 }
