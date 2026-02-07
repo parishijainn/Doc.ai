@@ -21,6 +21,12 @@ export default function HomePage() {
             Start Visit
           </Link>
           <Link
+            href="/care-map"
+            className="senior-btn-secondary inline-flex items-center justify-center"
+          >
+            Care Map
+          </Link>
+          <Link
             href="/visit/invite"
             className="senior-btn-secondary inline-flex items-center justify-center"
           >

@@ -1,17 +1,29 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 
 export default function InviteCaregiverPage() {
+  const search = useSearchParams();
+  const visitId = (search.get('visitId') ?? '').trim();
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [sent, setSent] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
-  const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
-  const visitLink = `${baseUrl}/consent`;
+  useEffect(() => setMounted(true), []);
+
+  const visitLink = useMemo(() => {
+    if (!mounted) return '';
+    const base = (process.env.NEXT_PUBLIC_APP_URL ?? '').trim() || (typeof window !== 'undefined' ? window.location.origin : '');
+    if (!base) return '';
+    if (!visitId) return `${base}/consent`;
+    return `${base}/visit/${encodeURIComponent(visitId)}`;
+  }, [mounted, visitId]);
 
   const handleCopyLink = () => {
+    if (!visitLink) return;
     navigator.clipboard.writeText(visitLink);
     setSent(true);
   };
@@ -25,6 +37,11 @@ export default function InviteCaregiverPage() {
         <p className="text-senior-lg text-slate-700">
           Share a link so a family member or caregiver can join your visit. They can open the link on their phone or computer.
         </p>
+        {!visitId ? (
+          <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl p-4 text-senior text-yellow-900">
+            Tip: open this page with <code>?visitId=YOUR_VISIT_ID</code> to share a link to a specific visit.
+          </div>
+        ) : null}
         <div className="bg-white border-2 border-slate-200 rounded-xl p-4 break-all text-senior">
           {visitLink}
         </div>
