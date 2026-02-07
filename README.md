@@ -1,5 +1,4 @@
-# CareZoom MVP
-
+# Doc.ai
 A Zoom-like video visit experience for senior citizens: AI clinician avatar (Tavus), image upload (injuries/skin/medications/exercises), and local care navigation (maps + OSRM routing). **This system does not diagnose or provide definitive treatment.** It offers triage guidance, education, next-step recommendations, and escalates to real clinicians when needed.
 
 ## Product Goals
