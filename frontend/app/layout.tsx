@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { AppLayout } from '../components/AppLayout';
 
 export const metadata: Metadata = {
   title: 'CareZoom – Your health visit, simplified',
@@ -17,7 +18,9 @@ export default function RootLayout({
         <meta name="theme-color" content="#f8fafc" />
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2" />
       </head>
-      <body className="min-h-full antialiased">{children}</body>
+      <body className="min-h-full antialiased">
+        <AppLayout>{children}</AppLayout>
+      </body>
     </html>
   );
 }

@@ -3,6 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import DailyIframe, { DailyCall } from '@daily-co/daily-js';
+import Link from 'next/link';
+import { Badge } from '../../../components/ui/badge';
+import { Button } from '../../../components/ui/button';
+import { Card, CardContent, CardHeader } from '../../../components/ui/card';
+import { Modal } from '../../../components/ui/modal';
+import { Tabs } from '../../../components/ui/tabs';
+import { Skeleton } from '../../../components/ui/skeleton';
+import { Camera, FileText, MapPinned, Share2, Mic, MicOff, Video, VideoOff, Captions as CaptionsIcon, PhoneOff } from 'lucide-react';
 
 const API =
   (process.env.NEXT_PUBLIC_API_URL ?? '').trim() ||
@@ -33,15 +41,23 @@ export default function VisitJoinPage() {
 
   const [loading, setLoading] = useState(true);
   const [visit, setVisit] = useState<VisitInfo | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [joinError, setJoinError] = useState<string | null>(null);
   const [joined, setJoined] = useState(false);
 
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
 
   const [captions, setCaptions] = useState('');
+  const [captionsVisible, setCaptionsVisible] = useState(true);
+  const [utterances, setUtterances] = useState<Array<{ speaker: 'user' | 'replica'; text: string; at: number }>>([]);
   const [shareCopied, setShareCopied] = useState(false);
   const [speakerConfirmedAsked, setSpeakerConfirmedAsked] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [rightTab, setRightTab] = useState<'captions' | 'notes' | 'actions'>('captions');
+  const [joinedAt, setJoinedAt] = useState<number | null>(null);
+  const [nowTick, setNowTick] = useState<number>(Date.now());
 
   const [planStep, setPlanStep] = useState<0 | 1 | 2 | 3>(0); // 0=not started, 1=AB, 2=C, 3=D, 4=EF via Next handler
   const [lastPlanPrompt, setLastPlanPrompt] = useState<string | null>(null);
@@ -64,25 +80,36 @@ export default function VisitJoinPage() {
   }, [visit]);
 
   const shareUrl = useMemo(() => {
+    if (!mounted) return '';
     const configured = (process.env.NEXT_PUBLIC_APP_URL ?? '').trim();
     const origin =
       configured ||
       (typeof window !== 'undefined' ? window.location.origin : '');
     return origin ? `${origin}/visit/${conversationId}` : '';
-  }, [conversationId]);
+  }, [conversationId, mounted]);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!joined) return;
+    const id = window.setInterval(() => setNowTick(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [joined]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      setError(null);
+      setLoadError(null);
       try {
         const res = await fetch(`${API}/api/visit/${conversationId}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error ?? 'Visit not found');
         if (!cancelled) setVisit(data);
       } catch (e) {
-        if (!cancelled) setError(String(e));
+        if (!cancelled) setLoadError(String(e));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -92,10 +119,36 @@ export default function VisitJoinPage() {
     };
   }, [conversationId]);
 
+  const startNewVisit = async () => {
+    try {
+      const res = await fetch(`${API}/api/visit/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.conversation_id) {
+        throw new Error(data?.error ?? data?.details ?? 'Could not start a new visit.');
+      }
+      router.push(`/visit/${data.conversation_id}`);
+    } catch (e) {
+      setJoinError(`Could not start a new visit. ${String(e)}`);
+    }
+  };
+
   const joinMeeting = async () => {
     if (!containerRef.current || !joinUrl) return;
-    setError(null);
+    setJoinError(null);
     try {
+      // If the user retries join, clear the previous frame to avoid stacking iframes.
+      try {
+        (callRef.current as any)?.destroy?.();
+      } catch {}
+      callRef.current = null;
+      try {
+        if (containerRef.current) containerRef.current.innerHTML = '';
+      } catch {}
+
       const call = DailyIframe.createFrame(containerRef.current, {
         showLeaveButton: false,
         iframeStyle: {
@@ -107,8 +160,14 @@ export default function VisitJoinPage() {
       });
       callRef.current = call;
 
-      call.on('joined-meeting', () => setJoined(true));
-      call.on('left-meeting', () => setJoined(false));
+      call.on('joined-meeting', () => {
+        setJoined(true);
+        setJoinedAt(Date.now());
+      });
+      call.on('left-meeting', () => {
+        setJoined(false);
+        setJoinedAt(null);
+      });
 
       call.on('app-message', (ev: any) => {
         try {
@@ -117,17 +176,23 @@ export default function VisitJoinPage() {
             const role = data.properties?.role; // 'user' | 'replica'
             const speech = data.properties?.speech;
             if (role && speech) {
-              if (role === 'replica') setCaptions(String(speech));
+              const text = String(speech);
+              if (role === 'replica') setCaptions(text);
+              setUtterances((prev) => {
+                const speaker = (role === 'replica' ? 'replica' : 'user') as 'user' | 'replica';
+                const next = [...prev, { speaker, text, at: Date.now() }];
+                return next.slice(-60);
+              });
               fetch(`${API}/api/visit/${conversationId}/utterance`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ speaker: role === 'replica' ? 'replica' : 'user', text: String(speech) }),
+                body: JSON.stringify({ speaker: role === 'replica' ? 'replica' : 'user', text }),
               }).catch(() => {});
 
               // Multi-speaker cue detection (ask once per visit).
               if (!speakerConfirmedAsked && role === 'user') {
                 const cue = /\b(tell (her|him)|my (mom|dad)|she said|he said|for my (mom|dad)|talking for|caregiver)\b/i;
-                if (cue.test(String(speech))) {
+                if (cue.test(text)) {
                   setSpeakerConfirmedAsked(true);
                   sendPrompt('Just to confirm—am I speaking with the patient, or a caregiver?');
                 }
@@ -136,7 +201,7 @@ export default function VisitJoinPage() {
               // Recap budget: after acknowledgement, keep future responses brief unless asked.
               if (role === 'user') {
                 const ack = /\b(thanks|thank you|ok|okay|good|got it|sounds good)\b/i;
-                if (ack.test(String(speech))) {
+                if (ack.test(text)) {
                   appendContext('The user acknowledged. Do NOT repeat the full plan unless they explicitly ask. Keep the next response brief and ask what they want next.');
                 }
               }
@@ -163,7 +228,14 @@ export default function VisitJoinPage() {
                   return String(e);
                 }
               })();
-      setError(`Could not join the video room. ${msg}`);
+      const s = String(msg);
+      if (s.includes('"type":"no-room"') || s.includes('no-room') || s.toLowerCase().includes('does not exist')) {
+        setJoinError(
+          'This meeting is no longer active (room not found). Ask the patient to start a new visit, or start a new visit now.'
+        );
+      } else {
+        setJoinError(`Could not join the video room. ${s}`);
+      }
     }
   };
 
@@ -240,9 +312,9 @@ export default function VisitJoinPage() {
     try {
       await callRef.current?.leave();
     } catch {}
-    try {
-      await fetch(`${API}/api/tavus/conversation/${conversationId}/end`, { method: 'POST' });
-    } catch {}
+    // IMPORTANT: Do not automatically end the Tavus room for everyone.
+    // Ending the room makes shared links show "no-room" for caregivers who join later.
+    // If you need to fully end it, do so server-side or add an explicit "End for everyone" control.
     router.push(`/visit/${conversationId}/summary`);
   };
 
@@ -318,233 +390,331 @@ export default function VisitJoinPage() {
   };
 
   return (
-    <main className="min-h-screen bg-slate-50 p-6">
-      <div className="max-w-6xl mx-auto space-y-4">
-        <header className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-senior-2xl font-bold text-slate-900">CareZoom video visit</h1>
-          <div className="flex gap-3">
-            <button className="senior-btn-secondary text-senior" onClick={copyShare} disabled={!shareUrl}>
-              {shareCopied ? 'Copied link' : 'Invite caregiver'}
-            </button>
-            <button className="senior-btn-secondary text-senior" onClick={endVisit}>
+    <main className="max-w-6xl mx-auto px-4 py-6 space-y-4">
+      <Card className="bg-white/80 backdrop-blur">
+        <CardContent className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="neutral">
+              Visit <span className="font-mono">{conversationId}</span>
+            </Badge>
+            <Badge variant={joined ? 'success' : 'warning'}>{joined ? 'Connected' : 'Not connected'}</Badge>
+            <Badge variant="info">
+              {joinedAt
+                ? (() => {
+                    const s = Math.max(0, Math.floor((nowTick - joinedAt) / 1000));
+                    const mm = String(Math.floor(s / 60)).padStart(2, '0');
+                    const ss = String(s % 60).padStart(2, '0');
+                    return `Elapsed ${mm}:${ss}`;
+                  })()
+                : 'Elapsed —'}
+            </Badge>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => setShareOpen(true)} disabled={!shareUrl}>
+              <Share2 className="w-4 h-4" />
+              Share
+            </Button>
+            <Link href={`/visit/${conversationId}/summary`}>
+              <Button variant="secondary">
+                <FileText className="w-4 h-4" />
+                Summary
+              </Button>
+            </Link>
+            <Button variant="destructive" onClick={endVisit}>
+              <PhoneOff className="w-4 h-4" />
               End visit
-            </button>
+            </Button>
           </div>
-        </header>
+        </CardContent>
+      </Card>
 
-        <div className="bg-white border border-slate-200 rounded-xl p-4 text-senior text-slate-700">
-          This is a <strong>pre-visit</strong> helper. The doctor avatar can’t diagnose. It will share possible causes,
-          warning signs, and next steps. If you have chest pain, trouble breathing, stroke symptoms, severe bleeding, or
-          feel unsafe, call 911 now.
-          {shareUrl && (
-            <div className="mt-2 break-all text-slate-600">
-              Caregiver link: <span className="font-mono">{shareUrl}</span>
-              <div className="text-sm mt-1">
-                To share beyond localhost, run an ngrok tunnel and set <code>NEXT_PUBLIC_APP_URL</code> to your ngrok URL.
-              </div>
-            </div>
-          )}
+      <Modal
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        title="Share with caregiver"
+        footer={
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Button variant="secondary" onClick={copyShare} disabled={!shareUrl} className="w-full sm:w-auto">
+              {shareCopied ? 'Copied' : 'Copy link'}
+            </Button>
+            <Link href={`/visit/invite?visitId=${encodeURIComponent(conversationId)}`} className="w-full sm:w-auto">
+              <Button className="w-full">Open invite page</Button>
+            </Link>
+          </div>
+        }
+      >
+        <div className="text-sm text-slate-700">Share this link. Anyone with it can open the meeting:</div>
+        <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 font-mono text-sm break-all">
+          {shareUrl || '—'}
         </div>
+        <div className="mt-3 text-xs text-slate-600">
+          If this shows <span className="font-mono">localhost</span>, set <span className="font-mono">NEXT_PUBLIC_APP_URL</span> to your ngrok/deployed URL.
+        </div>
+      </Modal>
 
-        {loading && <div className="bg-white border border-slate-200 rounded-xl p-6 text-senior">Loading visit…</div>}
-        {error && (
-          <div className="bg-red-50 border-2 border-red-500 rounded-xl p-6 text-senior">
-            <p className="font-bold">This visit link isn’t active.</p>
-            <p className="mt-2 break-words">{error}</p>
-            <p className="mt-2">Start a new visit from the home page, then share the new link.</p>
-          </div>
-        )}
+      <Card className="border-amber-200 bg-amber-50">
+        <CardContent className="text-sm text-amber-900">
+          <span className="font-semibold">Safety:</span> This is a pre‑visit helper and cannot diagnose. If you have chest pain, trouble breathing, stroke symptoms, severe bleeding, or feel unsafe, call emergency services now.
+        </CardContent>
+      </Card>
 
-        {visit && !joined && (
-          <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
-            <button className="senior-btn w-full" onClick={joinMeeting}>
-              Join meeting
-            </button>
-            <a className="text-teal-700 underline text-senior block" href={joinUrl} target="_blank" rel="noreferrer">
-              If embed doesn’t work, open Tavus room in a new tab
-            </a>
-          </div>
-        )}
+      {loading ? (
+        <div className="grid gap-4">
+          <Skeleton className="h-20" />
+          <Skeleton className="h-[340px]" />
+        </div>
+      ) : null}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-2">
-            <div className="bg-black rounded-2xl overflow-hidden aspect-video">
+      {loadError ? (
+        <Card className="border-red-200 bg-red-50">
+          <CardHeader>
+            <div className="text-xl font-extrabold tracking-tight text-red-900">This visit link isn’t active</div>
+            <div className="text-sm text-red-900/90 mt-1 break-words">{loadError}</div>
+          </CardHeader>
+          <CardContent className="flex flex-col sm:flex-row gap-3">
+            <Button onClick={startNewVisit}>Start a new visit</Button>
+            <Link href="/"><Button variant="secondary" className="w-full sm:w-auto">Back home</Button></Link>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {joinError && !loadError ? (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardHeader>
+            <div className="text-xl font-extrabold tracking-tight text-amber-900">Could not join this meeting</div>
+            <div className="text-sm text-amber-900/90 mt-1 break-words">{joinError}</div>
+          </CardHeader>
+          <CardContent className="flex flex-col sm:flex-row gap-3">
+            <Button onClick={startNewVisit}>Start a new visit</Button>
+            {joinUrl ? (
+              <a href={joinUrl} target="_blank" rel="noreferrer" className="w-full sm:w-auto">
+                <Button variant="secondary" className="w-full">Open room in new tab</Button>
+              </a>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {visit && !joined ? (
+        <Card>
+          <CardHeader>
+            <div className="text-xl font-extrabold tracking-tight text-slate-900">Join the meeting</div>
+            <div className="text-sm text-slate-600 mt-1">If embed fails, you can open the room in a new tab.</div>
+          </CardHeader>
+          <CardContent className="flex flex-col sm:flex-row gap-3">
+            <Button onClick={joinMeeting} className="w-full sm:w-auto">Join meeting</Button>
+            {joinUrl ? (
+              <a href={joinUrl} target="_blank" rel="noreferrer" className="w-full sm:w-auto">
+                <Button variant="secondary" className="w-full">Open in new tab</Button>
+              </a>
+            ) : null}
+            <Link href={`/visit/${conversationId}/photo`} className="w-full sm:w-auto">
+              <Button variant="secondary" className="w-full"><Camera className="w-4 h-4" />Photos</Button>
+            </Link>
+            <Link href={`/visit/${conversationId}/care-map`} className="w-full sm:w-auto">
+              <Button variant="secondary" className="w-full"><MapPinned className="w-4 h-4" />Care map</Button>
+            </Link>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <Card className="lg:col-span-2 overflow-hidden">
+          <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <div className="text-lg font-extrabold tracking-tight text-slate-900">Meeting</div>
+              <div className="text-sm text-slate-600">Captions are on by default.</div>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <Link href={`/visit/${conversationId}/photo`}><Button variant="secondary" size="md"><Camera className="w-4 h-4" />Photos</Button></Link>
+              <Link href={`/visit/${conversationId}/care-map`}><Button variant="secondary" size="md"><MapPinned className="w-4 h-4" />Care map</Button></Link>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="bg-black rounded-2xl overflow-hidden aspect-video border border-slate-200">
               <div ref={containerRef} className="w-full h-full" />
             </div>
-            {captions && (
-              <div className="caption-box mt-3">
-                <p className="font-medium mb-2">Captions</p>
-                <p>{captions}</p>
-              </div>
-            )}
+          </CardContent>
+        </Card>
+
+        <Card className="overflow-hidden">
+          <CardHeader>
+            <div className="text-lg font-extrabold tracking-tight text-slate-900">Visit panel</div>
+            <div className="text-sm text-slate-600 mt-1">Captions, notes, and actions.</div>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <Tabs
+              value={rightTab}
+              onChange={(id) => setRightTab(id as any)}
+              tabs={[
+                {
+                  id: 'captions',
+                  label: 'Captions',
+                  content: (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-semibold text-slate-700">Live captions</div>
+                        <Button variant="ghost" size="sm" onClick={() => setCaptionsVisible((v) => !v)}>
+                          <CaptionsIcon className="w-4 h-4" />
+                          {captionsVisible ? 'Hide' : 'Show'}
+                        </Button>
+                      </div>
+                      {captionsVisible ? (
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-slate-900 min-h-[88px]">
+                          {captions || <span className="text-slate-600">Waiting for the clinician avatar…</span>}
+                        </div>
+                      ) : (
+                        <div className="text-sm text-slate-600">Captions hidden.</div>
+                      )}
+                      <div className="rounded-2xl border border-slate-200 p-4">
+                        <div className="text-sm font-semibold text-slate-700">Recent</div>
+                        <ul className="mt-2 space-y-2 max-h-56 overflow-auto text-sm">
+                          {utterances
+                            .slice(-12)
+                            .reverse()
+                            .map((u, i) => (
+                              <li key={i} className="text-slate-800">
+                                <span className="font-semibold">{u.speaker === 'user' ? 'You' : 'Clinician'}:</span> {u.text}
+                              </li>
+                            ))}
+                          {!utterances.length ? <li className="text-slate-600">No transcript yet.</li> : null}
+                        </ul>
+                      </div>
+                    </div>
+                  ),
+                },
+                {
+                  id: 'notes',
+                  label: 'Notes',
+                  content: (
+                    <div className="space-y-3">
+                      <div className="text-sm font-semibold text-slate-700">Visit notes (auto)</div>
+                      <div className="rounded-2xl border border-slate-200 p-4">
+                        <ul className="list-disc pl-6 text-sm text-slate-800 space-y-2">
+                          {utterances
+                            .filter((u) => u.speaker === 'user')
+                            .slice(-10)
+                            .reverse()
+                            .map((u, i) => (
+                              <li key={i}>{u.text}</li>
+                            ))}
+                          {!utterances.filter((u) => u.speaker === 'user').length ? (
+                            <li className="text-slate-600">Start talking and your key points will appear here.</li>
+                          ) : null}
+                        </ul>
+                      </div>
+                    </div>
+                  ),
+                },
+                {
+                  id: 'actions',
+                  label: 'Actions',
+                  content: (
+                    <div className="space-y-3">
+                      <div className="text-sm font-semibold text-slate-700">Quick actions</div>
+                      <div className="grid gap-2">
+                        <Button
+                          variant="secondary"
+                          size="md"
+                          onClick={() =>
+                            sendPrompt(
+                              'Please ask me the next important question, one at a time, to understand my symptoms. Avoid repeating the full recap unless I ask.'
+                            )
+                          }
+                          disabled={!joined}
+                        >
+                          Guide triage questions
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="md"
+                          onClick={() => {
+                            setPlanStep(1);
+                            sendPlanChunk('AB');
+                          }}
+                          disabled={!joined}
+                        >
+                          Start plan
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="md"
+                          onClick={() => {
+                            if (planStep === 0) {
+                              setPlanStep(1);
+                              sendPlanChunk('AB');
+                              return;
+                            }
+                            if (planStep === 1) {
+                              setPlanStep(2);
+                              sendPlanChunk('C');
+                            } else if (planStep === 2) {
+                              setPlanStep(3);
+                              sendPlanChunk('D');
+                            } else {
+                              setPlanStep(0);
+                              sendPlanChunk('EF');
+                            }
+                          }}
+                          disabled={!joined}
+                        >
+                          Next step
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="md"
+                          onClick={() => {
+                            if (lastPlanPrompt) sendPrompt(lastPlanPrompt);
+                            else sendPlanChunk('AB');
+                          }}
+                          disabled={!joined}
+                        >
+                          Repeat
+                        </Button>
+                        <Button variant="secondary" size="md" onClick={() => sendPlanChunk('SLOWER')} disabled={!joined}>
+                          Slower
+                        </Button>
+                        <Button variant="secondary" size="md" onClick={() => sendPlanChunk('BULLETS3')} disabled={!joined}>
+                          Summarize in 3 bullets
+                        </Button>
+                      </div>
+                      <div className="pt-2 border-t border-slate-200" />
+                      <div className="grid gap-2">
+                        <Link href={`/visit/${conversationId}/summary`}><Button size="md" className="w-full">Go to summary</Button></Link>
+                        <Link href={`/visit/${conversationId}/photo`}><Button variant="secondary" size="md" className="w-full">Open photos</Button></Link>
+                        <Link href={`/visit/${conversationId}/care-map`}><Button variant="secondary" size="md" className="w-full">Open care map</Button></Link>
+                      </div>
+                    </div>
+                  ),
+                },
+              ]}
+            />
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="sticky bottom-4">
+        <div className="rounded-2xl border border-slate-200 bg-white/90 backdrop-blur p-3 shadow-sm flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
+          <div className="text-sm text-slate-600">{joined ? 'In call. Use controls below.' : 'Not connected yet.'}</div>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Button variant="secondary" size="md" onClick={toggleMic} disabled={!joined}>
+              {micOn ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
+              {micOn ? 'Mute' : 'Unmute'}
+            </Button>
+            <Button variant="secondary" size="md" onClick={toggleCam} disabled={!joined}>
+              {camOn ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
+              {camOn ? 'Camera' : 'Camera off'}
+            </Button>
+            <Button variant="secondary" size="md" onClick={() => setCaptionsVisible((v) => !v)}>
+              <CaptionsIcon className="w-4 h-4" />
+              {captionsVisible ? 'Captions on' : 'Captions off'}
+            </Button>
+            <Button variant="destructive" size="md" onClick={endVisit}>
+              <PhoneOff className="w-4 h-4" />
+              End
+            </Button>
           </div>
-
-          <aside className="bg-white border border-slate-200 rounded-xl p-4 space-y-4">
-            <div>
-              <p className="font-bold text-senior-lg">Controls</p>
-              <div className="grid gap-2 mt-2">
-                <button className="senior-btn-secondary w-full text-senior" onClick={toggleMic} disabled={!joined}>
-                  {micOn ? 'Mute microphone' : 'Unmute microphone'}
-                </button>
-                <button className="senior-btn-secondary w-full text-senior" onClick={toggleCam} disabled={!joined}>
-                  {camOn ? 'Turn camera off' : 'Turn camera on'}
-                </button>
-              </div>
-            </div>
-
-            <div className="pt-2 border-t border-slate-200" />
-
-            <div>
-              <p className="font-bold text-senior">Quick actions</p>
-              <div className="grid gap-2 mt-2">
-                <button
-                  className="senior-btn-secondary w-full text-senior"
-                  onClick={() => sendPrompt('Please ask me the next important question, one at a time, to understand my symptoms. Avoid repeating the full recap unless I ask.')}
-                  disabled={!joined}
-                >
-                  Guide triage questions
-                </button>
-                <button
-                  className="senior-btn-secondary w-full text-senior"
-                  onClick={() => {
-                    setPlanStep(1);
-                    sendPlanChunk('AB');
-                  }}
-                  disabled={!joined}
-                >
-                  Start plan (step 1)
-                </button>
-                <button
-                  className="senior-btn-secondary w-full text-senior"
-                  onClick={() => {
-                    if (planStep === 0) {
-                      setPlanStep(1);
-                      sendPlanChunk('AB');
-                      return;
-                    }
-                    if (planStep === 1) {
-                      setPlanStep(2);
-                      sendPlanChunk('C');
-                    } else if (planStep === 2) {
-                      setPlanStep(3);
-                      sendPlanChunk('D');
-                    } else {
-                      setPlanStep(0);
-                      sendPlanChunk('EF');
-                    }
-                  }}
-                  disabled={!joined}
-                >
-                  Next step
-                </button>
-                <button
-                  className="senior-btn-secondary w-full text-senior"
-                  onClick={() => {
-                    if (lastPlanPrompt) sendPrompt(lastPlanPrompt);
-                    else sendPlanChunk('AB');
-                  }}
-                  disabled={!joined}
-                >
-                  Repeat
-                </button>
-                <button
-                  className="senior-btn-secondary w-full text-senior"
-                  onClick={() => sendPlanChunk('SLOWER')}
-                  disabled={!joined}
-                >
-                  Slower
-                </button>
-                <button
-                  className="senior-btn-secondary w-full text-senior"
-                  onClick={() => sendPlanChunk('BULLETS3')}
-                  disabled={!joined}
-                >
-                  Summarize in 3 bullets
-                </button>
-                <button
-                  className="senior-btn-secondary w-full text-senior"
-                  onClick={() => sendPrompt('Please ask me to repeat the plan in my own words (teach-back).')}
-                  disabled={!joined}
-                >
-                  Teach-back
-                </button>
-                <button className="senior-btn w-full" onClick={() => router.push(`/visit/${conversationId}/summary`)}>
-                  Get summary
-                </button>
-              </div>
-            </div>
-
-            <div className="pt-2 border-t border-slate-200" />
-
-            <div>
-              <p className="font-bold text-senior">Upload photo</p>
-              <input
-                type="file"
-                accept="image/*"
-                capture="environment"
-                disabled={!joined || imageBusy}
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) uploadImage(f);
-                  e.currentTarget.value = '';
-                }}
-                className="block w-full text-senior mt-2"
-              />
-              {imageNote && <p className="text-sm text-slate-600 mt-2">{imageNote}</p>}
-            </div>
-
-            <div className="pt-2 border-t border-slate-200" />
-
-            <div>
-              <p className="font-bold text-senior">Find care nearby</p>
-              <div className="grid gap-2 mt-2">
-                <select className="senior-input" value={careType} onChange={(e) => setCareType(e.target.value)}>
-                  <option value="hospital">Hospital / ER</option>
-                  <option value="urgent_care">Urgent care</option>
-                  <option value="doctor">Doctor</option>
-                  <option value="dermatologist">Dermatologist</option>
-                </select>
-                <button className="senior-btn-secondary w-full text-senior" onClick={findCareNearby} disabled={geoBusy}>
-                  {geoBusy ? 'Searching…' : 'Use my location & search'}
-                </button>
-                {routeInfo && <p className="text-sm text-slate-600">{routeInfo}</p>}
-                {uberLink && (
-                  <a className="text-teal-700 underline text-senior" href={uberLink} target="_blank" rel="noreferrer">
-                    Open Uber
-                  </a>
-                )}
-              </div>
-
-              {nearby.length > 0 && (
-                <ul className="mt-3 space-y-2 max-h-64 overflow-y-auto">
-                  {nearby.map((p, idx) => (
-                    <li key={idx} className="border border-slate-200 rounded-lg p-3">
-                      <div className="font-semibold">{p.name}</div>
-                      <div className="text-sm text-slate-600">{p.address || 'Address not listed'}</div>
-                      {p.phone && (
-                        <a className="text-teal-700 underline text-sm" href={`tel:${p.phone}`}>
-                          Call {p.phone}
-                        </a>
-                      )}
-                      {p.distance_km != null && (
-                        <div className="text-sm text-slate-600">~{p.distance_km.toFixed(1)} km away</div>
-                      )}
-                      <button
-                        className="senior-btn-secondary w-full text-senior mt-2"
-                        onClick={() => {
-                          if (!myLoc) return;
-                          getDirections(p.coordinates);
-                        }}
-                        disabled={!myLoc || geoBusy}
-                      >
-                        Get route & transport
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </aside>
         </div>
       </div>
     </main>
