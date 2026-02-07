@@ -1,0 +1,22 @@
+# Env files (never commit API keys)
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env.local
+
+# Dependencies and build
+node_modules/
+backend/dist/
+frontend/.next/
+.next/
+
+# Logs and audit
+backend/logs/
+*.log
+
+# OS and IDE
+.DS_Store
+*.swp
+.idea/
+.vscode/

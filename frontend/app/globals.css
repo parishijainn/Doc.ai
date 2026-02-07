@@ -1,0 +1,75 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --senior-bg: #f8fafc;
+  --senior-fg: #0f172a;
+  --senior-accent: #0d9488;
+  --senior-accent-hover: #0f766e;
+  --senior-danger: #dc2626;
+  --senior-high-contrast: 1;
+}
+
+@media (prefers-contrast: high) {
+  :root {
+    --senior-fg: #000;
+    --senior-bg: #fff;
+  }
+}
+
+body.high-contrast {
+  --senior-fg: #000;
+  --senior-bg: #fff;
+  color: #000;
+  background: #fff;
+}
+body.high-contrast .senior-btn {
+  background: #000;
+  color: #fff;
+}
+body.high-contrast .senior-btn:hover {
+  background: #333;
+}
+body.high-contrast .caption-box {
+  background: #000;
+  color: #fff;
+}
+
+body {
+  font-size: 1.25rem;
+  line-height: 1.6;
+  color: var(--senior-fg);
+  background: var(--senior-bg);
+}
+
+.senior-btn {
+  @apply px-8 py-4 text-senior-lg font-semibold rounded-xl min-h-[56px] min-w-[200px];
+  background: var(--senior-accent);
+  color: white;
+}
+
+.senior-btn:hover {
+  background: var(--senior-accent-hover);
+}
+
+.senior-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.senior-btn-secondary {
+  @apply px-8 py-4 text-senior-lg font-semibold rounded-xl border-2 border-teal-600 text-teal-700 bg-white min-h-[56px];
+}
+
+.senior-input {
+  @apply text-senior p-4 rounded-lg border-2 border-slate-300 w-full max-w-md;
+}
+
+.senior-input:focus {
+  @apply outline-none border-teal-500 ring-2 ring-teal-200;
+}
+
+.caption-box {
+  @apply bg-slate-800 text-white p-4 rounded-lg text-senior max-h-32 overflow-y-auto;
+}
